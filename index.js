@@ -3412,6 +3412,7 @@
     var ADR_CD_LIB_GEN_IDLE_MS = 120000;
     var ADR_CD_LIB_GEN_REPLY_TOKENS = 4000;
     var adrCdLibraryGenerationRunning = false;
+    var adrCdGenerationOutput = null; // 上方试运行/生成结果，与下方待保存的卡库草稿分开；仅保留在当前页面/聊天。
     var adrCdGeneratedDraft = null; // 仅当前页面/聊天的待确认草稿；不冒充原卡库触发自动保存。
     function adrCdCurrentDraft() {
         if (adrCdGeneratedDraft && adrCdGeneratedDraft.chatKey !== adrDChatKey()) adrCdGeneratedDraft = null;
@@ -4988,6 +4989,7 @@
             adrCdSetCheckedSafe("adr044-cd-paused", state.paused === true);
             adrCdRefreshSlotSelects();
             adrCdRefreshLifePanel();
+            adrCdRefreshGenerationOutput();
             adrCdUpdateStatusLine();
         } catch (e) {}
     }
@@ -5627,6 +5629,7 @@
         if (id === "adr044-cd-import") { adrCdTriggerImport(); return true; }
         if (id === "adr044-cd-generate") { adrCdGenerateLibrary(); return true; }
         if (id === "adr044-cd-gen-local") { adrCdPreviewLibraryGeneration(); return true; }
+        if (id === "adr044-cd-gen-fill") { adrCdFillGeneratedLibrary(btn); return true; }
         if (id === "adr044-cd-load-models") { loadModels("cd"); return true; }
         if (id === "adr044-cd-test") { adrCdTestConnection(); return true; }
         if (id === "adr044-cd-save") { syncType("cd"); status("cd", "已保存当前使用的择池 API ✓", "#8ed99d"); return true; }
@@ -5651,7 +5654,7 @@
         }
     }
 
-    // ---- AI 生成卡库：复用择池／择卡 API，结果先回填编辑器，确认后再保存 ----
+    // ---- AI 生成卡库：复用择池／择卡 API，先在上方编辑结果，手动回填后再确认保存 ----
 
     function adrCdNormalizeGeneratedLibrary(raw) {
         var text = String(raw || "").replace(/\r\n?/g, "\n").trim();
@@ -5679,8 +5682,42 @@
         return name;
     }
 
+    function adrCdCurrentGenerationOutput() {
+        if (adrCdGenerationOutput && adrCdGenerationOutput.chatKey !== adrDChatKey()) {
+            // 切聊后不能继续显示/回填旧聊天的内容，放大窗内尚未提交的编辑也一并关闭。
+            try {
+                var big = rootDoc().querySelector("#adrx-editor");
+                if (big && big.__adrxSourceId === "adr044-cd-gen-preview") adrxCloseBigEditor();
+            } catch (e) {}
+            adrDEndLiveOutput(adrDLiveOutputs["adr044-cd-gen-preview"]);
+            var notice = "聊天已切换，已清除上次生成/试运行内容，请在当前聊天重新生成。";
+            adrCdGenerationOutput = { chatKey: adrDChatKey(), kind: "notice", text: notice, status: notice, color: "#d6b177" };
+        }
+        return adrCdGenerationOutput;
+    }
+
     function adrCdSetGenerationStatus(text, color) {
+        var output = adrCdCurrentGenerationOutput();
+        if (output) { output.status = text; output.color = color || "#d6b177"; }
         adrCdSetTextAll("adr044-cd-gen-status", text, color || "#d6b177");
+    }
+
+    function adrCdRefreshGenerationOutput() {
+        var output = adrCdCurrentGenerationOutput();
+        var busy = adrCdLibraryGenerationRunning || adrCdLibraryGenerationPreviewRunning;
+        var editable = !!(output && output.kind === "generated" && output.received && !busy);
+        try {
+            Array.prototype.slice.call(rootDoc().querySelectorAll("#adr044-cd-gen-preview")).forEach(function (el) {
+                el.readOnly = !editable;
+                el.setAttribute("aria-label", output && output.kind === "generated" ? "AI 生成卡库结果" : "卡库生成试运行：完整发送内容");
+            });
+            Array.prototype.slice.call(rootDoc().querySelectorAll("#adr044-cd-gen-fill")).forEach(function (el) {
+                el.disabled = !editable || !String(output.text || "").trim();
+                el.title = busy ? "请等生成结束后再回填" : (editable ? "将上方当前文本原样回填，不自动保存" : "请先生成卡库；试运行的发送内容不能回填");
+            });
+        } catch (e) {}
+        adrDSetAllById("adr044-cd-gen-preview", output ? output.text : "");
+        if (output && output.status) adrCdSetTextAll("adr044-cd-gen-status", output.status, output.color || "#d6b177");
     }
 
     function adrCdSetGenerationBusy(busy) {
@@ -5688,11 +5725,53 @@
             Array.prototype.slice.call(rootDoc().querySelectorAll("#adr044-cd-generate, #adr044-cd-gen-local")).forEach(function (el) {
                 var preview = el.id === "adr044-cd-gen-local";
                 el.disabled = !!busy;
-                el.textContent = busy
-                    ? (preview ? "试运行准备中…" : "🧠 生成中…")
-                    : (preview ? "试运行（不花钱）" : "🧠 思考生成卡库");
+                el.textContent = preview
+                    ? (adrCdLibraryGenerationPreviewRunning ? "试运行准备中…" : "试运行（不花钱）")
+                    : (adrCdLibraryGenerationRunning ? "生成中…" : "思考生成卡库");
             });
         } catch (e) {}
+        adrCdRefreshGenerationOutput();
+    }
+
+    function adrCdFillGeneratedLibrary(btn) {
+        var output = adrCdCurrentGenerationOutput();
+        if (adrCdLibraryGenerationRunning || adrCdLibraryGenerationPreviewRunning) return false;
+        if (!output || output.kind !== "generated" || !output.received) {
+            adrCdRefreshGenerationOutput();
+            return false;
+        }
+        var text = String(output.text || "");
+        if (!text.trim()) {
+            adrCdSetGenerationStatus("当前生成结果为空，请先补充卡库内容再回填。", "#d4726a");
+            adrCdRefreshGenerationOutput();
+            return false;
+        }
+        // 只有点击回填才替换编辑区。先完成原卡库的待写入手改，防止防抖任务把新稿存进旧库。
+        if (adrCdEditorDebounce) {
+            clearTimeout(adrCdEditorDebounce); adrCdEditorDebounce = null;
+            var editingName = adrCdEditingName(), previousEditor = qForm("adr044-cd-lib-editor");
+            if (editingName && previousEditor) {
+                var libraries = adrCdLibraries();
+                libraries[editingName] = String(previousEditor.value || "");
+                save("cdLibraries", libraries);
+            }
+        }
+        var draft = adrCdCurrentDraft();
+        var name = draft && draft.source === output ? draft.name : output.name;
+        if (!name || adrCdLibraries()[name] !== undefined) name = adrCdNextGeneratedLibraryName();
+        // 原样复制用户当前编辑的文本；不重新请求、不裁剪，也不派发编辑器的自动保存事件。
+        adrCdGeneratedDraft = { name: name, text: text, chatKey: output.chatKey, source: output };
+        adrCdLoadEditor(undefined, true);
+        adrxRevealModuleFor("adr044-cd-lib-editor");
+        var targetSlot = adrCdImportSlot();
+        adrCdSetGenerationStatus("已将上方当前内容回填到「编辑卡库」，尚未保存；可继续修改或再次回填。", "#8ed99d");
+        adrCdLibStatus("AI 卡库已回填，尚未保存。请检查卡库名和正文，再点击「保存」" + (targetSlot ? "（将挂进" + ADR_CD_SLOT_FULL[targetSlot] + "）" : "") + "。", "#8ed99d");
+        try {
+            var panel = btn && btn.closest("#adr048-popup-panel, #adr044-drawer");
+            var editor = panel ? panel.querySelector("#adr044-cd-lib-editor") : qForm("adr044-cd-lib-editor");
+            if (editor && editor.scrollIntoView) editor.scrollIntoView({ block: "nearest" });
+        } catch (e) {}
+        return true;
     }
 
     function adrCdSetLibraryStreaming(busy) {
@@ -5771,27 +5850,28 @@
 
     async function adrCdPreviewLibraryGeneration() {
         if (adrCdLibraryGenerationRunning || adrCdLibraryGenerationPreviewRunning) return false;
+        var output = { chatKey: adrDChatKey(), kind: "preview", text: "" };
+        adrCdGenerationOutput = output;
         adrCdLibraryGenerationPreviewRunning = true;
         adrCdSetGenerationBusy(true);
         adrCdSetGenerationStatus("正在准备试运行内容…", "#d6b177");
-        adrDSetAllById("adr044-cd-gen-preview", "");
         try {
-            var chatKey = adrDChatKey();
             var body = await adrCdBuildLibraryGenerationBody();
             var statistics = await adrDPreviewStats(body);
-            adrCdAssertRequestChat(chatKey);
+            adrCdAssertRequestChat(output.chatKey);
             var sections = ["【抽卡卡库生成试运行｜完整发送内容，未发送】"];
             body.messages.forEach(function (message) {
                 var heading = message.role === "system" ? "系统预设" : "发送上下文";
                 sections.push("【" + heading + " · " + message.role + "】\n" + message.content);
             });
-            adrDSetAllById("adr044-cd-gen-preview", sections.join("\n\n"));
-            adrCdSetGenerationStatus("试运行完成 ✓｜" + statistics + "（未调用择池／择卡 API，未保存卡库）", "#8ed99d");
+            output.text = sections.join("\n\n");
+            adrCdSetGenerationStatus("试运行完成 ✓｜" + statistics + "（未调用择池／择卡 API，未保存卡库；这是发送预览，不能回填）", "#8ed99d");
             return true;
         } catch (error) {
-            var previewError = "试运行失败：" + (error && error.message ? error.message : String(error));
-            adrDSetAllById("adr044-cd-gen-preview", previewError);
-            adrCdSetGenerationStatus(previewError, "#d4726a");
+            if (adrCdCurrentGenerationOutput() === output) {
+                output.text = "试运行失败：" + (error && error.message ? error.message : String(error));
+                adrCdSetGenerationStatus(output.text, "#d4726a");
+            }
             return false;
         } finally {
             adrCdLibraryGenerationPreviewRunning = false;
@@ -5800,9 +5880,12 @@
     }
     async function adrCdGenerateLibrary() {
         if (adrCdLibraryGenerationRunning || adrCdLibraryGenerationPreviewRunning) return;
+        var output = { chatKey: adrDChatKey(), kind: "generated", text: "", received: false, name: adrCdNextGeneratedLibraryName() };
+        adrCdGenerationOutput = output;
         adrCdLibraryGenerationRunning = true;
         adrCdSetGenerationBusy(true);
-        var previewOutput = null, editorOutput = null;
+        adrCdSetGenerationStatus("正在准备生成内容…", "#d6b177");
+        var previewOutput = adrDBeginLiveOutput("adr044-cd-gen-preview", "");
         try {
             // 先把当前面板里的 API 输入框写回设置，避免用户改完就点生成时读到旧值。
             syncType("cd");
@@ -5812,68 +5895,37 @@
             var url = chatUrl(endpoint);
             if (!url) throw new Error("择池／择卡 API 地址无效");
 
-            var generationChatKey = adrDChatKey();
             var body = await adrCdBuildLibraryGenerationBody();
-            var targetSlot = adrCdImportSlot();
-            var targetLabel = targetSlot ? ADR_CD_SLOT_FULL[targetSlot] : "未指定仓库";
-
-            // 在替换编辑区前完成已有手动编辑，避免延迟自动保存把流式片段写进旧库。
-            if (adrCdEditorDebounce) {
-                clearTimeout(adrCdEditorDebounce); adrCdEditorDebounce = null;
-                var editingName = adrCdEditingName(), previousEditor = qForm("adr044-cd-lib-editor");
-                if (editingName && previousEditor) {
-                    var existingLibraries = adrCdLibraries();
-                    existingLibraries[editingName] = String(previousEditor.value || "");
-                    save("cdLibraries", existingLibraries);
-                }
-            }
-            previewOutput = adrDBeginLiveOutput("adr044-cd-gen-preview", "");
-            var name = adrCdNextGeneratedLibraryName();
             adrCdSetGenerationStatus(body.stream ? "生成中…等待流式内容" : "生成中…等待完整答复", "#8ed99d");
             var responseText = await adrCdRequestApi(body, "生成卡库", {
-                chatKey: generationChatKey, idleMs: ADR_CD_LIB_GEN_IDLE_MS, hardMs: 600000,
+                chatKey: output.chatKey, idleMs: ADR_CD_LIB_GEN_IDLE_MS, hardMs: 600000,
                 onProgress: function (info) {
+                    if (adrCdCurrentGenerationOutput() !== output) return;
                     if (info.text) {
+                        output.text = info.text;
+                        output.received = true;
                         adrDWriteLiveOutput(previewOutput, info.text);
-                        if (!editorOutput) {
-                            adrCdGeneratedDraft = { name: name, text: "", chatKey: generationChatKey };
-                            adrCdRefreshEditSelect("", true);
-                            adrDSetAllById("adr044-cd-lib-name", name);
-                            editorOutput = adrDBeginLiveOutput("adr044-cd-lib-editor", "");
-                            adrCdSetLibraryStreaming(true);
-                            adrxRevealModuleFor("adr044-cd-lib-editor");
-                        }
-                        adrCdGeneratedDraft.text = info.text;
-                        adrDWriteLiveOutput(editorOutput, info.text);
-                        adrCdSetGenerationStatus("生成中…（已收到 " + info.text.length + " 字）", "#8ed99d");
+                        adrCdSetGenerationStatus("生成中…（已收到 " + info.text.length + " 字，结束后可编辑并回填）", "#8ed99d");
                     } else if (info.reasoningChars) {
                         adrCdSetGenerationStatus("生成中…（模型思考中，已收到 " + info.reasoningChars + " 字思考增量）", "#8ed99d");
                     }
                 }
             });
-            adrCdAssertRequestChat(generationChatKey);
-            var generated = adrCdNormalizeGeneratedLibrary(responseText);
-            // 结果只回填编辑器，不自动覆盖/保存；用户确认后点「保存」，落点选择照常生效。
-            if (adrCdEditorDebounce) { clearTimeout(adrCdEditorDebounce); adrCdEditorDebounce = null; }
-            adrDSetAllById("adr044-cd-lib-name", name);
-            adrCdGeneratedDraft.text = generated;
-            adrDWriteLiveOutput(editorOutput, generated);
-            var generatedPools = adrCdParseLibraryText(generated);
+            adrCdAssertRequestChat(output.chatKey);
+            output.text = responseText;
+            output.received = true;
+            adrDWriteLiveOutput(previewOutput, responseText);
+            // 只校验/统计格式，完整答复保留在上方；下方编辑器直到用户点击回填才会改变。
+            var generatedPools = adrCdParseLibraryText(adrCdNormalizeGeneratedLibrary(responseText));
             var generatedCards = 0;
             generatedPools.forEach(function (p) { generatedCards += p.cards.length; });
-            adrCdSetGenerationStatus("已生成「" + name + "」：" + generatedPools.length + " 池 / " + generatedCards + " 张。请检查内容，确认后点击「保存」" + (targetSlot ? "（将挂进" + targetLabel + "）" : "") + " ✓", "#8ed99d");
-            adrCdLibStatus("AI 卡库已回填编辑器，尚未保存。", "#8ed99d");
+            adrCdSetGenerationStatus("已生成：" + generatedPools.length + " 池 / " + generatedCards + " 张。完整结果在上方，可直接编辑，再点击「回填到编辑卡库」；尚未保存 ✓", "#8ed99d");
         } catch (e) {
-            adrCdSetGenerationStatus("生成失败：" + (e && e.message ? e.message : e), "#d4726a");
+            if (adrCdCurrentGenerationOutput() === output) {
+                adrCdSetGenerationStatus("生成失败：" + (e && e.message ? e.message : e) + (output.received ? "。已收到的内容保留在上方，但不是完整结果；请检查、补全后再回填。" : ""), "#d4726a");
+            }
         } finally {
             adrDEndLiveOutput(previewOutput);
-            adrDEndLiveOutput(editorOutput);
-            adrCdSetLibraryStreaming(false);
-            if (editorOutput && !adrCdCurrentDraft()) {
-                adrDSetAllById("adr044-cd-gen-preview", "聊天已切换，本次生成已取消");
-                // 旧聊天的流式草稿必须清掉，不能被编辑器的焦点保护留在新聊天里。
-                adrCdLoadEditor(undefined, true);
-            }
             adrCdLibraryGenerationRunning = false;
             adrCdSetGenerationBusy(false);
         }
@@ -6139,6 +6191,19 @@
             });
             each("adr044-api-profile-name-cd", function (el) { guard(el); });
 
+            each("adr044-cd-gen-preview", function (el) {
+                function rememberOutput() {
+                    var output = adrCdCurrentGenerationOutput();
+                    if (!output || output.kind !== "generated" || !output.received || adrCdLibraryGenerationRunning || adrCdLibraryGenerationPreviewRunning) {
+                        adrCdRefreshGenerationOutput();
+                        return;
+                    }
+                    output.text = String(el.value || "");
+                    adrCdRefreshGenerationOutput(); // 同步另一份面板/放大窗；不写设置或触发卡库自动保存。
+                }
+                el.addEventListener("input", rememberOutput);
+                el.addEventListener("change", rememberOutput);
+            });
             each("adr044-cd-edit-select", function (el) {
                 guard(el);
                 el.addEventListener("change", function () {
@@ -6159,6 +6224,7 @@
                     // 即改即生效：600ms 防抖写回正在编辑的那副库
                     if (adrCdEditorDebounce) clearTimeout(adrCdEditorDebounce);
                     adrCdEditorDebounce = setTimeout(function () {
+                        adrCdEditorDebounce = null;
                         try {
                             var name = adrCdEditingName();
                             if (!name) return;
@@ -6185,6 +6251,7 @@
             each("adr044-cd-status-line", function (el) {
                 el.addEventListener("click", function () { adrCdToggleStatusExpand(); });
             });
+            adrCdSetGenerationBusy(adrCdLibraryGenerationRunning || adrCdLibraryGenerationPreviewRunning);
         } catch (e) {
             try { console.warn("[抽卡小能手] 控件绑定失败", e); } catch (e2) {}
         }
@@ -6293,7 +6360,7 @@
             + secClose()
 
             + secOpen("AI 生成卡库", true, "cd-generation")
-            + '<div class="' + noteClass + '">这里调用择池／择卡 API 生成卡库。可以先「试运行」查看将发送给 AI 的完整内容；真正生成后只回填编辑器，不会自动保存。Anima 总结严格跟随中控：开启才读取并发送，关闭则不读取、不发送。</div>'
+            + '<div class="' + noteClass + '">这里调用择池／择卡 API 生成卡库。可以先「试运行」查看将发送给 AI 的完整内容；生成结果会在下方实时显示，结束后可编辑，再点「回填到编辑卡库」；不会自动覆盖编辑器或保存。Anima 总结严格跟随中控：开启才读取并发送，关闭则不读取、不发送。</div>'
             + '<label>抽卡预设 · 生成卡库（支持多个版本）</label>'
             + adrCdAiPresetHTML("generate")
             + '<div class="adr044-template-status">这是生成卡库的固定规则；下面的「本次生成要求」只影响当前这一轮。卡库生成按中控指定范围读取正文，不额外截断；内容过滤及 Anima 历史总结的开关、条数和前缀也沿用中控。</div>'
@@ -6302,11 +6369,11 @@
             + '<label>生成卡池数（1–6）</label><input type="number" id="adr044-cd-gen-pools" min="1" max="6" step="1" value="3">'
             + '<label>每池卡数（2–10）</label><input type="number" id="adr044-cd-gen-cards" min="2" max="10" step="1" value="5">'
             + '<div class="adr044-template-status" id="adr044-cd-gen-status">可先试运行看看将发给 AI 的完整内容，或直接点「思考生成卡库」。</div>'
-            + '<textarea id="adr044-cd-gen-preview" rows="8" readonly placeholder="点击「试运行（不花钱）」查看完整发送内容"></textarea>'
-            + '<div class="' + actionsClass + '"><button type="button" id="adr044-cd-gen-local">试运行（不花钱）</button><button type="button" id="adr044-cd-generate">思考生成卡库</button></div>'
+            + '<textarea id="adr044-cd-gen-preview" rows="8" readonly aria-label="卡库生成试运行：完整发送内容" placeholder="试运行：查看完整发送内容；思考生成卡库：在这里接收完整结果，结束后可编辑修改，再点击下方回填"></textarea>'
+            + '<div class="' + actionsClass + '"><button type="button" id="adr044-cd-gen-local">试运行（不花钱）</button><button type="button" id="adr044-cd-generate">思考生成卡库</button><button type="button" id="adr044-cd-gen-fill" disabled>回填到编辑卡库</button></div>'
             + '<label>保存/导入归属（仅本地使用，不发送给 AI）</label>'
             + adrCdImportSlotSelectHTML()
-            + '<div class="adr044-template-status">生成结果只回填编辑器，确认并保存时才挂入所选仓库。导入卡库也会沿用此归属；此选项不影响 AI 生成要求。</div>'
+            + '<div class="adr044-template-status">点击「回填到编辑卡库」只复制当前文本；在编辑器确认并点击「保存」后，才挂入所选仓库。导入卡库也会沿用此归属；此选项不影响 AI 生成要求。</div>'
             + secClose()
 
             + secOpen("三个仓库", true, "cd-repositories")
@@ -7836,6 +7903,8 @@
                 rootDoc().addEventListener("input", function (ev) {
                     var t = ev && ev.target;
                     if (!t || !t.id || t.id.indexOf("adr044-") !== 0) return;
+                    // 生成结果是本地临时文本，不走设置自动保存/计数刷新，以免在 input 捕获阶段刷回旧值。
+                    if (t.id === "adr044-cd-gen-preview") return;
                     try {
                         syncShared();
                         if (t.id.indexOf("adr044-emotion-") === 0) syncType("emotion");
@@ -7847,6 +7916,8 @@
                 rootDoc().addEventListener("change", function (ev) {
                     var t = ev && ev.target;
                     if (!t || !t.id || t.id.indexOf("adr044-") !== 0) return;
+                    // 生成结果是本地临时文本，不走设置自动保存/计数刷新，以免在 input 捕获阶段刷回旧值。
+                    if (t.id === "adr044-cd-gen-preview") return;
                     try {
                         syncShared();
                         if (t.id.indexOf("adr044-emotion-") === 0) syncType("emotion");
@@ -7890,6 +7961,7 @@
         ids["adr044-cd-import"] = function () { adrCdTriggerImport(); };
         ids["adr044-cd-generate"] = function () { adrCdGenerateLibrary(); };
         ids["adr044-cd-gen-local"] = function () { adrCdPreviewLibraryGeneration(); };
+        ids["adr044-cd-gen-fill"] = function () { adrCdFillGeneratedLibrary(qForm("adr044-cd-gen-fill")); };
         ids["adr044-probe-context"] = function () { runContextProbe(); };
         ids["adr044-probe-content"] = function () { runContentProbe(); };
         ids["adr044-preview-precise"] = function () { runPrecisePreview(); };

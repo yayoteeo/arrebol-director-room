@@ -21,7 +21,7 @@ const hooks = `
         request: adrCdRequestApi, body: adrCdChoiceBody,
         manual: adrCdManualDraw, auto: adrCdAutoCheck, draw: adrCdPerformDraw,
         generation: adrCdGenerateLibrary, preview: adrCdPreviewSelection,
-        generationPreview: adrCdPreviewLibraryGeneration,
+        generationPreview: adrCdPreviewLibraryGeneration, fillGeneration: adrCdFillGeneratedLibrary,
         isDrawing: function () { return adrCdDrawRunning; },
         isPreviewing: function () { return adrCdSelectionPreviewRunning; },
         shiftBaseline: adrCdShiftBaselineDown,
@@ -404,11 +404,18 @@ for (const stream of [false, true]) {
         const text = '## 线索\n旧信封被放回了桌面\n门缝下露出半张纸条';
         e.response(() => stream ? sseResponse([delta({ reasoning_content: '思考' }), delta({ content: text }), 'data: [DONE]\n\n']) : json(text));
         const before = JSON.stringify(e.st.cdLibraries);
+        e.api.loadEditor();
+        const previousText = e.doc.getElementById('adr044-cd-lib-editor').value;
+        const previousName = e.doc.getElementById('adr044-cd-lib-name').value;
         await e.api.generation();
         assert.equal(e.calls.length, 1);
         assert.equal(e.calls[0].body.stream, stream);
         assert.equal(e.doc.getElementById('adr044-cd-gen-preview').value, text);
-        assert.equal(e.doc.getElementById('adr044-cd-lib-editor').value, text);
+        assert.equal(e.doc.getElementById('adr044-cd-lib-editor').value, previousText, '未点回填不能覆盖编辑器');
+        assert.equal(e.doc.getElementById('adr044-cd-lib-name').value, previousName);
+        assert.equal(e.doc.getElementById('adr044-cd-gen-preview').readOnly, false);
+        assert.equal(e.doc.getElementById('adr044-cd-gen-fill').disabled, false);
+        assert.equal(e.doc.getElementById('adr044-cd-generate').textContent, '思考生成卡库');
         assert.equal(JSON.stringify(e.st.cdLibraries), before);
         assert.match(e.doc.getElementById('adr044-cd-gen-status').textContent, /已生成/);
     });
@@ -575,6 +582,7 @@ test('保存/导入归属不再发送给 AI，仍能在确认保存后挂入本�
     await e.api.generation();
     assert.equal(e.calls.length, 1);
     assert.equal(JSON.stringify(e.calls[0].body.messages), expected);
+    e.click('adr044-cd-gen-fill');
     const name = e.doc.getElementById('adr044-cd-lib-name').value;
     assert.ok(name);
     assert.equal(e.st.cdLibraries[name], undefined, '生成不自动保存');
@@ -631,65 +639,95 @@ function controlledStream() {
     };
 }
 
-test('真实分段生成：结束前编辑器/双面板/放大窗同步，草稿手改也不会覆盖旧库', async t => {
+test('真实分段生成只进入上方双面板/放大窗，结束后手改再原样回填，不自动覆盖或保存', async t => {
     const e = setup(t, { cdStreamEnabled: true });
     e.api.renderAll();
     const original = JSON.stringify(e.st.cdLibraries);
     const stream = controlledStream();
     e.response(options => stream.response(options.signal));
+    const editor = e.doc.getElementById('adr044-cd-lib-editor');
+    const previousText = editor.value;
     const result = e.api.generation();
     await e.settle(stream.started);
-    const editor = e.doc.getElementById('adr044-cd-lib-editor');
-    e.api.openBig(editor);
+    const output = e.doc.getElementById('adr044-cd-gen-preview');
+    e.api.openBig(output);
     stream.push(delta({ reasoning_content: '思考不可作为卡面' }));
     await e.settle(() => /模型思考中/.test(e.doc.getElementById('adr044-cd-gen-status').textContent));
-    assert.doesNotMatch(editor.value, /思考不可作为卡面/);
+    assert.doesNotMatch(output.value, /思考不可作为卡面/);
     const first = '## 线索\n门口出现一封';
     stream.push(delta({ content: first }));
-    await e.settle(() => editor.value === first);
+    await e.settle(() => output.value === first);
     const big = e.doc.querySelector('.adrx-editor-ta');
     assert.equal(big.value, first);
     assert.equal(big.readOnly, true);
-    for (const field of e.doc.querySelectorAll('#adr044-cd-lib-editor')) {
+    for (const field of e.doc.querySelectorAll('#adr044-cd-gen-preview')) {
         assert.equal(field.value, first); assert.equal(field.readOnly, true);
-        assert.equal(field.closest('details').open, true);
+        assert.equal(field.getAttribute('aria-busy'), 'true');
     }
-    assert.equal(e.doc.getElementById('adr044-cd-lib-save').disabled, true);
+    for (const field of e.doc.querySelectorAll('#adr044-cd-lib-editor')) {
+        assert.equal(field.value, previousText); assert.equal(field.readOnly, false);
+        assert.equal(field.closest('details').open, false, '流式不能强制展开旧编辑器');
+    }
+    assert.equal(e.doc.getElementById('adr044-cd-lib-save').disabled, false);
+    assert.equal(e.doc.getElementById('adr044-cd-gen-fill').disabled, true);
+    assert.equal(e.api.fillGeneration(), false, '即使绕过禁用按钮也不能回填半份流式结果');
     assert.equal(JSON.stringify(e.st.cdLibraries), original);
     e.api.refreshFields();
-    assert.equal(editor.value, first, '后台刷新不能把正在流式输出的正文刷回旧库');
+    assert.equal(output.value, first, '后台刷新不能覆盖正在接收的正文');
     stream.push(delta({ content: '旧信\n有人敲了两下门' }));
     const full = first + '旧信\n有人敲了两下门';
     await e.settle(() => big.value === full);
-    assert.equal(JSON.stringify(e.st.cdLibraries), original);
     stream.push('data: [DONE]\n\n'); stream.close(); await result;
-    assert.equal(editor.readOnly, false);
+    assert.equal(output.readOnly, false);
+    assert.equal(output.hasAttribute('aria-busy'), false);
     assert.equal(big.readOnly, false);
-    assert.equal(e.doc.getElementById('adr044-cd-lib-save').disabled, false);
+    assert.equal(e.doc.querySelector('.adrx-editor-ok').textContent, '确定');
+    assert.equal(e.doc.getElementById('adr044-cd-gen-fill').disabled, false);
+    assert.equal(e.doc.getElementById('adr044-cd-edit-select').value, '测试库');
+    const edited = full + '\n// 原样保留我的备注\n补一张上方手改卡';
+    big.value = edited; big.dispatchEvent(new e.win.Event('input'));
+    e.api.refreshFields();
+    assert.equal(big.value, edited, '刷新不丢弃放大窗尚未提交的修改');
+    e.doc.querySelector('.adrx-editor-ok').click();
+    for (const field of e.doc.querySelectorAll('#adr044-cd-gen-preview')) assert.equal(field.value, edited);
+    assert.equal(editor.value, previousText);
+    e.click('adr044-cd-gen-fill');
+    for (const field of e.doc.querySelectorAll('#adr044-cd-lib-editor')) {
+        assert.equal(field.value, edited);
+        assert.equal(field.closest('details').open, true);
+    }
+    assert.equal(output.value, edited, '回填不清空上方结果');
     assert.equal(e.doc.getElementById('adr044-cd-edit-select').value, '');
-    e.api.closeBig();
-    e.input('adr044-cd-lib-editor', full + '\n补一张手改卡');
+    assert.equal(e.calls.length, 1, '回填只在本地复制，不再请求 API');
+    e.input('adr044-cd-lib-editor', edited + '\n补一张编辑器手改卡');
     await new Promise(resolve => setTimeout(resolve, 650));
-    assert.equal(JSON.stringify(e.st.cdLibraries), original, '未确认保存的生成草稿不得自动覆写已有卡库');
+    assert.equal(JSON.stringify(e.st.cdLibraries), original, '待确认草稿不得自动覆写已有卡库');
     e.click('adr044-cd-lib-save');
-    assert.ok(Object.values(e.st.cdLibraries).some(text => text.includes('补一张手改卡')));
+    assert.ok(Object.values(e.st.cdLibraries).some(text => text.includes('补一张编辑器手改卡')));
     assert.equal(e.st.cdLibraries['测试库'], JSON.parse(original)['测试库']);
 });
 
-test('流式中断保留已收到的卡库草稿，解除只读/按钮锁定且不保存', async t => {
+test('流式中断只在上方保留已收到的内容，允许补全后手动回填且不保存', async t => {
     const e = setup(t, { cdStreamEnabled: true });
     e.api.renderAll();
     const original = JSON.stringify(e.st.cdLibraries), stream = controlledStream();
+    const editor = e.doc.getElementById('adr044-cd-lib-editor'), previous = editor.value;
     e.response(options => stream.response(options.signal));
     const task = e.api.generation();
     await e.settle(stream.started);
     stream.push(delta({ content: '## 草稿\n只收到这一半' }));
-    await e.settle(() => /只收到这一半/.test(e.doc.getElementById('adr044-cd-lib-editor').value));
+    await e.settle(() => /只收到这一半/.test(e.doc.getElementById('adr044-cd-gen-preview').value));
     stream.fail('网络中断'); await task;
-    assert.match(e.doc.getElementById('adr044-cd-gen-status').textContent, /网络中断/);
-    assert.match(e.doc.getElementById('adr044-cd-lib-editor').value, /只收到这一半/);
-    assert.equal(e.doc.getElementById('adr044-cd-lib-editor').readOnly, false);
+    assert.match(e.doc.getElementById('adr044-cd-gen-status').textContent, /网络中断.*不是完整结果/);
+    assert.match(e.doc.getElementById('adr044-cd-gen-preview').value, /只收到这一半/);
+    assert.equal(e.doc.getElementById('adr044-cd-gen-preview').readOnly, false);
+    assert.equal(editor.value, previous);
     assert.equal(e.doc.getElementById('adr044-cd-generate').disabled, false);
+    assert.equal(e.doc.getElementById('adr044-cd-gen-fill').disabled, false);
+    assert.equal(JSON.stringify(e.st.cdLibraries), original);
+    e.input('adr044-cd-gen-preview', '## 补全的卡池\n已经手动补全');
+    e.click('adr044-cd-gen-fill');
+    assert.equal(editor.value, '## 补全的卡池\n已经手动补全');
     assert.equal(JSON.stringify(e.st.cdLibraries), original);
 });
 
@@ -779,23 +817,29 @@ test('三个大类下每个模块都可折叠，默认只展开常用区，双�
     assert.ok([...e.doc.querySelectorAll(selector)].every(node => !node.open));
 });
 
-test('生成期间切换聊天，即使编辑器仍有焦点也清掉旧聊天的半份草稿', async t => {
+test('生成期间切换聊天，即使上方仍有焦点也清掉旧结果并禁用回填，编辑器始终不被覆盖', async t => {
     const e = setup(t, { cdStreamEnabled: true }); e.api.renderAll();
     const original = JSON.stringify(e.st.cdLibraries);
-    const editor = e.doc.getElementById('adr044-cd-lib-editor'); editor.focus();
+    const editor = e.doc.getElementById('adr044-cd-lib-editor'), previous = editor.value;
+    const output = e.doc.getElementById('adr044-cd-gen-preview'); output.focus();
     const stream = controlledStream(); e.response(options => stream.response(options.signal));
     const task = e.api.generation(); await e.settle(stream.started);
     stream.push(delta({ content: '## 旧聊天的临时草稿\n这一半不应进入新聊天' }));
-    await e.settle(() => /这一半/.test(editor.value));
-    assert.equal(e.doc.activeElement, editor);
+    await e.settle(() => /这一半/.test(output.value));
+    assert.equal(e.doc.activeElement, output);
     e.context.chatId = 'chat-b'; e.context.chatMetadata = {};
+    e.api.refreshFields();
+    assert.doesNotMatch(output.value, /这一半/);
     stream.push(delta({ content: '\n还在发送的旧聊天内容' }));
     await task;
     for (const node of e.doc.querySelectorAll('#adr044-cd-lib-editor')) {
-        assert.doesNotMatch(node.value, /旧聊天|这一半/);
+        assert.equal(node.value, previous);
         assert.equal(node.readOnly, false);
     }
-    assert.match(e.doc.getElementById('adr044-cd-gen-preview').value, /聊天已切换/);
+    assert.match(output.value, /聊天已切换/);
+    assert.equal(output.readOnly, true);
+    assert.equal(e.doc.getElementById('adr044-cd-gen-fill').disabled, true);
+    assert.equal(e.api.fillGeneration(), false);
     assert.equal(JSON.stringify(e.st.cdLibraries), original);
     assert.notEqual(e.doc.getElementById('adr044-cd-edit-select').value, '');
 });
@@ -823,3 +867,163 @@ for (const failure of ['network', 'sse-error']) {
         assert.equal(e.doc.getElementById('adr044-emotion-generate').disabled, false);
     });
 }
+test('回填按钮初始禁用；试运行只读且不可回填，重新试运行不影响已回填草稿', async t => {
+    const e = setup(t); e.api.renderAll();
+    const original = JSON.stringify(e.st.cdLibraries);
+    const previousEditor = e.doc.getElementById('adr044-cd-lib-editor').value;
+    for (const button of e.doc.querySelectorAll('#adr044-cd-gen-fill')) {
+        assert.equal(button.textContent, '回填到编辑卡库');
+        assert.equal(button.type, 'button'); assert.equal(button.disabled, true);
+    }
+    assert.equal(e.api.fillGeneration(), false);
+    assert.equal(await e.api.generationPreview(), true);
+    const output = e.doc.getElementById('adr044-cd-gen-preview');
+    assert.match(output.value, /完整发送内容，未发送/);
+    assert.equal(output.readOnly, true);
+    assert.equal(e.api.fillGeneration(), false);
+    assert.equal(e.calls.length, 0);
+    assert.equal(e.doc.getElementById('adr044-cd-lib-editor').value, previousEditor);
+    e.response(() => json('## 新库\n一张新卡'));
+    await e.api.generation(); e.click('adr044-cd-gen-fill');
+    const draftName = e.doc.getElementById('adr044-cd-lib-name').value;
+    await e.api.generationPreview();
+    assert.equal(output.readOnly, true);
+    assert.match(output.value, /完整发送内容，未发送/);
+    for (const button of e.doc.querySelectorAll('#adr044-cd-gen-fill')) assert.equal(button.disabled, true);
+    e.click('adr044-cd-gen-fill');
+    assert.equal(e.doc.getElementById('adr044-cd-lib-editor').value, '## 新库\n一张新卡');
+    assert.equal(e.doc.getElementById('adr044-cd-lib-name').value, draftName);
+    assert.equal(JSON.stringify(e.st.cdLibraries), original);
+    assert.equal(e.calls.length, 1);
+});
+
+test('上方完整保留长答复和手动备注，抽屉/悬浮窗输入同步；点击回填按当前文本原样复制', async t => {
+    const e = setup(t); e.api.renderAll();
+    const original = JSON.stringify(e.st.cdLibraries);
+    const full = '这是 AI 的完整答复\n```text\n## 长卡库\n' + '未被截断的卡面细节'.repeat(2000) + '\n末尾的卡\n```';
+    e.response(() => json(full)); await e.api.generation();
+    const output = e.doc.getElementById('adr044-cd-gen-preview');
+    assert.equal(output.value, full, '显示完整答复，不悄悄删除开场白/围栏或截断末尾');
+    e.input(output.id, '## 手工整理\n// 我的注释\n第一张卡\n\n');
+    const twin = e.doc.querySelector('#adr048-popup-panel #adr044-cd-gen-preview');
+    assert.equal(twin.value, output.value);
+    const edited = twin.value + '在悬浮窗补充的卡';
+    twin.value = edited; twin.dispatchEvent(new e.win.Event('input', { bubbles: true }));
+    assert.equal(output.value, edited);
+    e.doc.querySelector('#adr048-popup-panel #adr044-cd-gen-fill').click();
+    for (const field of e.doc.querySelectorAll('#adr044-cd-lib-editor')) assert.equal(field.value, edited);
+    assert.equal(JSON.stringify(e.st.cdLibraries), original);
+    assert.equal(e.calls.length, 1);
+});
+
+test('清空结果后只禁用回填，仍可继续输入；修改结果不写设置或自动保存旧卡库', async t => {
+    const e = setup(t); e.api.renderAll();
+    e.response(() => json('## 结果\n原始卡面')); await e.api.generation();
+    const beforeSettings = JSON.stringify(e.st);
+    const output = e.input('adr044-cd-gen-preview', '   \n');
+    assert.equal(output.readOnly, false);
+    assert.equal(e.doc.getElementById('adr044-cd-gen-fill').disabled, true);
+    assert.equal(e.api.fillGeneration(), false);
+    e.input(output.id, '## 手改\n重新输入的卡');
+    assert.equal(e.doc.getElementById('adr044-cd-gen-fill').disabled, false);
+    assert.equal(JSON.stringify(e.st), beforeSettings);
+    assert.equal(e.calls.length, 1);
+});
+
+test('流式过程中重建面板仍接续输出并锁定回填；完成后重开保留修改和按钮状态', async t => {
+    const e = setup(t, { cdStreamEnabled: true }); e.api.renderAll();
+    const stream = controlledStream(); e.response(options => stream.response(options.signal));
+    const task = e.api.generation(); await e.settle(stream.started);
+    stream.push(delta({ content: '## 进度\n第一段' }));
+    await e.settle(() => /第一段/.test(e.doc.getElementById('adr044-cd-gen-preview').value));
+    e.api.renderAll();
+    for (const output of e.doc.querySelectorAll('#adr044-cd-gen-preview')) {
+        assert.equal(output.value, '## 进度\n第一段'); assert.equal(output.readOnly, true);
+    }
+    for (const suffix of ['gen-fill', 'generate', 'gen-local']) {
+        assert.ok([...e.doc.querySelectorAll('#adr044-cd-' + suffix)].every(button => button.disabled));
+    }
+    e.click('adr044-cd-generate'); e.click('adr044-cd-gen-local');
+    assert.equal(e.calls.length, 1, '面板重开不能绕过运行锁重复请求');
+    stream.push(delta({ content: '完成\n第二张卡' })); stream.push('data: [DONE]\n\n'); stream.close(); await task;
+    e.input('adr044-cd-gen-preview', '## 完成\n重开之前的修改');
+    e.api.renderAll();
+    for (const output of e.doc.querySelectorAll('#adr044-cd-gen-preview')) {
+        assert.equal(output.value, '## 完成\n重开之前的修改'); assert.equal(output.readOnly, false);
+    }
+    assert.equal(e.doc.getElementById('adr044-cd-gen-fill').disabled, false);
+    assert.equal(e.doc.getElementById('adr044-cd-lib-editor').value, e.st.cdLibraries['测试库']);
+});
+
+test('回填前完成原卡库的待写入手改，不能让延迟自动保存把生成稿写进旧库', async t => {
+    const e = setup(t, { cdStreamEnabled: true }); e.api.renderAll();
+    const stream = controlledStream(); e.response(options => stream.response(options.signal));
+    const task = e.api.generation(); await e.settle(stream.started);
+    const previous = '## 原来的卡库\n在生成期间手动修改旧库';
+    e.input('adr044-cd-lib-editor', previous);
+    assert.equal(e.doc.getElementById('adr044-cd-lib-editor').readOnly, false);
+    const generated = '## 新生成\n新卡不能存进旧库';
+    stream.push(delta({ content: generated })); stream.push('data: [DONE]\n\n'); stream.close(); await task;
+    assert.equal(e.doc.getElementById('adr044-cd-lib-editor').value, previous);
+    e.click('adr044-cd-gen-fill');
+    await new Promise(resolve => setTimeout(resolve, 650));
+    assert.equal(e.st.cdLibraries['测试库'], previous);
+    assert.equal(Object.keys(e.st.cdLibraries).length, 1);
+    assert.equal(e.doc.getElementById('adr044-cd-lib-editor').value, generated);
+    assert.equal(e.calls.length, 1);
+});
+
+test('完成后切换聊天会清除结果和放大窗未提交文字，旧内容不能回填新聊天', async t => {
+    const e = setup(t); e.api.renderAll();
+    e.response(() => json('## 旧聊天\n私有结果')); await e.api.generation();
+    const original = JSON.stringify(e.st.cdLibraries);
+    e.api.openBig(e.doc.getElementById('adr044-cd-gen-preview'));
+    const big = e.doc.querySelector('.adrx-editor-ta');
+    big.value = '## 旧聊天\n未提交的修改'; big.dispatchEvent(new e.win.Event('input'));
+    e.context.chatId = 'chat-b'; e.context.chatMetadata = {};
+    assert.equal(e.api.fillGeneration(), false, '无需等后台刷新，回填动作也必须检查聊天');
+    assert.equal(e.doc.querySelector('#adrx-editor'), null);
+    for (const output of e.doc.querySelectorAll('#adr044-cd-gen-preview')) {
+        assert.doesNotMatch(output.value, /私有结果|未提交的修改/); assert.equal(output.readOnly, true);
+    }
+    for (const button of e.doc.querySelectorAll('#adr044-cd-gen-fill')) assert.equal(button.disabled, true);
+    assert.equal(JSON.stringify(e.st.cdLibraries), original);
+});
+
+for (const failure of ['error', 'reasoning-only']) {
+    test('没有正文的生成失败不会启用回填；能恢复按钮并重新生成：' + failure, async t => {
+        const e = setup(t, { cdStreamEnabled: true }); e.api.renderAll();
+        const original = JSON.stringify(e.st.cdLibraries);
+        e.response(() => failure === 'error'
+            ? { ok: false, status: 503, text: async () => '上游不可用' }
+            : sseResponse([delta({ reasoning_content: '只有思考没有卡面' }), 'data: [DONE]\n\n']));
+        await e.api.generation();
+        assert.match(e.doc.getElementById('adr044-cd-gen-status').textContent, /生成失败/);
+        assert.equal(e.doc.getElementById('adr044-cd-gen-preview').value, '');
+        assert.equal(e.doc.getElementById('adr044-cd-gen-preview').readOnly, true);
+        assert.equal(e.doc.getElementById('adr044-cd-gen-fill').disabled, true);
+        assert.equal(e.doc.getElementById('adr044-cd-generate').disabled, false);
+        assert.equal(e.api.fillGeneration(), false);
+        assert.equal(JSON.stringify(e.st.cdLibraries), original);
+        e.response(() => json('## 重试\n完整的新卡'));
+        await e.api.generation();
+        assert.equal(e.doc.getElementById('adr044-cd-gen-fill').disabled, false);
+        assert.equal(e.doc.getElementById('adr044-cd-gen-preview').readOnly, false);
+    });
+}
+
+test('重复回填沿用当前草稿名，保存后再次回填不会自动覆盖已保存的卡库', async t => {
+    const e = setup(t); e.api.renderAll();
+    e.response(() => json('## 待编辑\n第一版')); await e.api.generation(); e.click('adr044-cd-gen-fill');
+    e.input('adr044-cd-lib-name', '我的卡库');
+    e.input('adr044-cd-gen-preview', '## 待编辑\n第二版'); e.click('adr044-cd-gen-fill');
+    assert.equal(e.doc.getElementById('adr044-cd-lib-name').value, '我的卡库');
+    assert.equal(e.st.cdLibraries['我的卡库'], undefined);
+    e.click('adr044-cd-lib-save');
+    assert.equal(e.st.cdLibraries['我的卡库'], '## 待编辑\n第二版');
+    e.input('adr044-cd-gen-preview', '## 待编辑\n第三版'); e.click('adr044-cd-gen-fill');
+    assert.notEqual(e.doc.getElementById('adr044-cd-lib-name').value, '我的卡库');
+    assert.equal(e.st.cdLibraries['我的卡库'], '## 待编辑\n第二版');
+    assert.equal(e.doc.getElementById('adr044-cd-lib-editor').value, '## 待编辑\n第三版');
+    assert.equal(e.calls.length, 1);
+});
