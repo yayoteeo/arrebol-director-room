@@ -6040,25 +6040,6 @@ html :is(#adr048-popup-panel[data-arb-theme="tavern"] #adr048-popup-shell,
 
 html :is(#adr048-popup-panel[data-arb-theme="tavern"] #adr048-popup-shell,
     #adr044-drawer[data-arb-theme="tavern"] .inline-drawer-content)
-    :is(.adr048-check, .adr044-check) input[type="checkbox"] {
-    appearance: auto !important;
-    -webkit-appearance: auto !important;
-    accent-color: var(--arb-rose) !important;
-    background: none !important;
-    box-shadow: none !important;
-    width: 16px !important;
-    height: 16px !important;
-    flex: 0 0 16px !important;
-}
-
-html :is(#adr048-popup-panel[data-arb-theme="tavern"] #adr048-popup-shell,
-    #adr044-drawer[data-arb-theme="tavern"] .inline-drawer-content)
-    :is(.adr048-check, .adr044-check) input[type="checkbox"]::after {
-    content: none !important;
-}
-
-html :is(#adr048-popup-panel[data-arb-theme="tavern"] #adr048-popup-shell,
-    #adr044-drawer[data-arb-theme="tavern"] .inline-drawer-content)
     #adr044-master-toggle::before {
     background: none !important;
     padding-left: 0 !important;
@@ -6083,107 +6064,123 @@ html :is(#adr048-popup-panel[data-arb-theme="tavern"] #adr048-popup-body,
     box-shadow: none !important;
 }
 
-/* v1.9.27：统一美化选择复选框。保留外层开关语义，进阶项使用更紧凑的方形勾选。 */
-html :is(#adr048-popup-panel, #adr044-drawer) :is(.adr048-check, .adr044-check) {
+/* 复选项统一收口：覆盖旧主题及酒馆原生样式，避免胶囊轨道与原生方框叠画。
+   仅作用于扩展内的复选项；保留原生 input/label 的键盘、点击与读屏语义。 */
+html :is(#adr048-popup-panel #adr048-popup-shell #adr048-popup-body, #adr044-drawer) :is(.adr048-check, .adr044-check) {
+    --adr-check-accent: color-mix(in srgb, var(--arb-lilac, var(--adrx-lilac, #927bbb)) 72%, #49385f);
     display: flex !important;
-    align-items: center !important;
+    align-items: flex-start !important;
+    box-sizing: border-box !important;
     gap: 10px !important;
     min-height: 38px !important;
-    margin: 6px 0 !important;
-    padding: 8px 10px !important;
-    border: 1px solid var(--arb-line, var(--adrx-line, rgba(120, 120, 140, .24))) !important;
-    border-radius: 13px !important;
-    background: var(--arb-card, var(--adrx-card, rgba(120, 120, 140, .07))) !important;
+    margin: 3px 0 !important;
+    padding: 8px !important;
+    border: 1px solid transparent !important;
+    border-radius: 8px !important;
+    background: transparent !important;
     color: var(--arb-ink, var(--adrx-ink, inherit)) !important;
-    line-height: 1.45 !important;
+    font-size: 12.5px !important;
+    font-weight: 500 !important;
+    line-height: 20px !important;
     white-space: normal !important;
+    box-shadow: none !important;
+    transform: none !important;
     cursor: pointer !important;
     user-select: none !important;
-    transition: background .16s ease, border-color .16s ease, box-shadow .16s ease, transform .16s ease !important;
+    transition: background-color .16s ease !important;
 }
 
-html :is(#adr048-popup-panel, #adr044-drawer) :is(.adr048-check, .adr044-check):hover {
-    border-color: var(--arb-rose, var(--adrx-rose, #d67a6a)) !important;
-    background: var(--arb-card-strong, var(--adrx-card-strong, rgba(214, 122, 106, .10))) !important;
-    transform: translateY(-1px) !important;
+html :is(#adr048-popup-panel #adr048-popup-shell #adr048-popup-body, #adr044-drawer) :is(.adr048-check, .adr044-check):hover {
+    background: color-mix(in srgb, var(--arb-lilac, var(--adrx-lilac, #927bbb)) 7%, transparent) !important;
 }
 
-html :is(#adr048-popup-panel, #adr044-drawer) :is(.adr048-check, .adr044-check):focus-within {
-    border-color: var(--arb-rose, var(--adrx-rose, #d67a6a)) !important;
-    box-shadow: 0 0 0 3px color-mix(in srgb, var(--arb-rose, #d67a6a) 16%, transparent) !important;
+html :is(#adr048-popup-panel #adr048-popup-shell #adr048-popup-body, #adr044-drawer) :is(.adr048-check, .adr044-check):has(input[type="checkbox"]:checked) {
+    background: color-mix(in srgb, var(--arb-lilac, var(--adrx-lilac, #927bbb)) 8%, transparent) !important;
 }
 
-html :is(#adr048-popup-panel, #adr044-drawer) :is(.adr048-check, .adr044-check):has(input[type="checkbox"]:checked) {
-    border-color: color-mix(in srgb, var(--arb-rose, #d67a6a) 62%, var(--arb-line, transparent)) !important;
-    background: color-mix(in srgb, var(--arb-rose, #d67a6a) 9%, var(--arb-card, rgba(120, 120, 140, .07))) !important;
-    box-shadow: 0 5px 16px color-mix(in srgb, var(--arb-rose, #d67a6a) 12%, transparent) !important;
-}
-
-html :is(#adr048-popup-panel, #adr044-drawer) :is(.adr048-check, .adr044-check) input[type="checkbox"] {
+html :is(#adr048-popup-panel #adr048-popup-shell #adr048-popup-body, #adr044-drawer) :is(.adr048-check, .adr044-check) input[type="checkbox"] {
     appearance: none !important;
     -webkit-appearance: none !important;
+    display: inline-block !important;
     position: relative !important;
-    flex: 0 0 38px !important;
-    width: 38px !important;
-    min-width: 38px !important;
-    max-width: 38px !important;
-    height: 22px !important;
-    min-height: 22px !important;
-    margin: 0 !important;
-    padding: 0 !important;
-    border: 1px solid var(--arb-line-strong, var(--adrx-line-strong, rgba(100, 100, 120, .30))) !important;
-    border-radius: 999px !important;
-    background:
-        radial-gradient(circle at 10px 50%, #fff 0 6px, transparent 6.8px),
-        var(--arb-field, var(--adrx-field, rgba(120, 120, 140, .13))) !important;
-    box-shadow: inset 0 1px 2px rgba(50, 45, 80, .10) !important;
-    cursor: pointer !important;
-    transition: background .18s ease, border-color .18s ease, box-shadow .18s ease !important;
-}
-
-html :is(#adr048-popup-panel, #adr044-drawer) :is(.adr048-check, .adr044-check) input[type="checkbox"]:checked {
-    border-color: transparent !important;
-    background:
-        radial-gradient(circle at calc(100% - 10px) 50%, #fff 0 6px, transparent 6.8px),
-        linear-gradient(90deg, var(--arb-rose, var(--adrx-rose, #d67a6a)), var(--arb-lilac, #b890cf)) !important;
-    box-shadow: 0 3px 10px color-mix(in srgb, var(--arb-rose, #d67a6a) 26%, transparent) !important;
-}
-
-html :is(#adr048-popup-panel, #adr044-drawer) :is(.adr048-check, .adr044-check) input[type="checkbox"]:focus-visible {
-    outline: 2px solid var(--arb-rose, var(--adrx-rose, #d67a6a)) !important;
-    outline-offset: 3px !important;
-}
-
-html :is(#adr048-popup-panel, #adr044-drawer) :is(.adr048-check, .adr044-check) input[type="checkbox"]::after {
-    content: none !important;
-}
-
-/* 进阶设置里的复选项改为更轻量的方形勾选，避免和主开关混淆。 */
-html :is(#adr048-popup-panel, #adr044-drawer) .adrx-drawer :is(.adr048-check, .adr044-check) {
-    min-height: 32px !important;
-    margin: 4px 0 !important;
-    padding: 6px 8px !important;
-    border-radius: 10px !important;
-    background: transparent !important;
-    box-shadow: none !important;
-}
-
-html :is(#adr048-popup-panel, #adr044-drawer) .adrx-drawer :is(.adr048-check, .adr044-check) input[type="checkbox"] {
-    flex-basis: 20px !important;
+    box-sizing: border-box !important;
+    flex: 0 0 20px !important;
     width: 20px !important;
     min-width: 20px !important;
     max-width: 20px !important;
     height: 20px !important;
     min-height: 20px !important;
+    max-height: 20px !important;
+    margin: 0 !important;
+    padding: 0 !important;
+    border: 1.5px solid color-mix(in srgb, var(--arb-ink, var(--adrx-ink, #514c60)) 38%, transparent) !important;
     border-radius: 6px !important;
-    background: var(--arb-field, var(--adrx-field, rgba(120, 120, 140, .10))) !important;
+    background: var(--arb-field, var(--adrx-field, transparent)) !important;
+    box-shadow: none !important;
+    outline: none !important;
+    filter: none !important;
+    transform: none !important;
+    cursor: pointer !important;
+    transition: background-color .16s ease, border-color .16s ease !important;
 }
 
-html :is(#adr048-popup-panel, #adr044-drawer) .adrx-drawer :is(.adr048-check, .adr044-check) input[type="checkbox"]:checked {
-    border-color: transparent !important;
-    background:
-        url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'%3E%3Cpath d='M3.5 8.5l3 3 6-6.5' fill='none' stroke='%23ffffff' stroke-width='2.2' stroke-linecap='round' stroke-linejoin='round'/%3E%3C/svg%3E") center / 13px 13px no-repeat,
-        linear-gradient(135deg, var(--arb-rose, var(--adrx-rose, #d67a6a)), var(--arb-lilac, #b890cf)) !important;
+html :is(#adr048-popup-panel #adr048-popup-shell #adr048-popup-body, #adr044-drawer) :is(.adr048-check, .adr044-check):hover input[type="checkbox"]:not(:disabled) {
+    border-color: var(--adr-check-accent) !important;
+}
+
+html :is(#adr048-popup-panel #adr048-popup-shell #adr048-popup-body, #adr044-drawer) :is(.adr048-check, .adr044-check) input[type="checkbox"]:checked {
+    border-color: var(--adr-check-accent) !important;
+    background: var(--adr-check-accent)
+        url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'%3E%3Cpath d='M3.5 8.5l3 3 6-6.5' fill='none' stroke='%23ffffff' stroke-width='2.2' stroke-linecap='round' stroke-linejoin='round'/%3E%3C/svg%3E") center / 14px 14px no-repeat !important;
+}
+
+html :is(#adr048-popup-panel #adr048-popup-shell #adr048-popup-body, #adr044-drawer) :is(.adr048-check, .adr044-check) input[type="checkbox"]:focus-visible {
+    outline: 2px solid var(--adr-check-accent) !important;
+    outline-offset: 3px !important;
+}
+
+/* 酒馆的 ::before 与旧版本的 ::after 都停用，勾选标记只绘制一次。 */
+html :is(#adr048-popup-panel #adr048-popup-shell #adr048-popup-body, #adr044-drawer) :is(.adr048-check, .adr044-check) input[type="checkbox"]::before,
+html :is(#adr048-popup-panel #adr048-popup-shell #adr048-popup-body, #adr044-drawer) :is(.adr048-check, .adr044-check) input[type="checkbox"]::after {
+    content: none !important;
+    display: none !important;
+}
+
+html :is(#adr048-popup-panel #adr048-popup-shell #adr048-popup-body, #adr044-drawer) :is(.adr048-check, .adr044-check):has(input[type="checkbox"]:disabled) {
+    opacity: .5 !important;
+    cursor: not-allowed !important;
+}
+
+html :is(#adr048-popup-panel #adr048-popup-shell #adr048-popup-body, #adr044-drawer) :is(.adr048-check, .adr044-check) input[type="checkbox"]:disabled {
+    cursor: not-allowed !important;
+}
+
+@media (pointer: coarse) {
+    html :is(#adr048-popup-panel #adr048-popup-shell #adr048-popup-body, #adr044-drawer) :is(.adr048-check, .adr044-check) {
+        min-height: 44px !important;
+        padding-top: 11px !important;
+        padding-bottom: 11px !important;
+    }
+}
+
+@media (prefers-reduced-motion: reduce) {
+    html :is(#adr048-popup-panel #adr048-popup-shell #adr048-popup-body, #adr044-drawer) :is(.adr048-check, .adr044-check),
+    html :is(#adr048-popup-panel #adr048-popup-shell #adr048-popup-body, #adr044-drawer) :is(.adr048-check, .adr044-check) input[type="checkbox"] {
+        transition: none !important;
+    }
+}
+
+@media (forced-colors: active) {
+    html :is(#adr048-popup-panel #adr048-popup-shell #adr048-popup-body, #adr044-drawer) :is(.adr048-check, .adr044-check) input[type="checkbox"],
+    html :is(#adr048-popup-panel #adr048-popup-shell #adr048-popup-body, #adr044-drawer) :is(.adr048-check, .adr044-check) input[type="checkbox"]:checked {
+        appearance: auto !important;
+        -webkit-appearance: auto !important;
+        background: none !important;
+        border: 0 !important;
+    }
+    html :is(#adr048-popup-panel #adr048-popup-shell #adr048-popup-body, #adr044-drawer) :is(.adr048-check, .adr044-check) input[type="checkbox"]:focus-visible {
+        outline-color: Highlight !important;
+    }
 }
 
 html :is(#adr048-popup-panel, #adr044-drawer) #adr044-cd-gen-preview {
@@ -6192,13 +6189,6 @@ html :is(#adr048-popup-panel, #adr044-drawer) #adr044-cd-gen-preview {
     font-size: 12px !important;
     line-height: 1.55 !important;
     resize: vertical !important;
-}
-
-@media (prefers-reduced-motion: reduce) {
-    html :is(#adr048-popup-panel, #adr044-drawer) :is(.adr048-check, .adr044-check),
-    html :is(#adr048-popup-panel, #adr044-drawer) :is(.adr048-check, .adr044-check) input[type="checkbox"] {
-        transition: none !important;
-    }
 }
 
 /* 抽卡 AI：版本工具栏与手动动作保持紧凑，完整预览在面板内滚动。 */

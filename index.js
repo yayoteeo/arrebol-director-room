@@ -1255,8 +1255,10 @@
         return !names.length || names.indexOf("*") !== -1;
     }
 
-    async function recentContentBlocks(rounds) {
+    async function recentContentBlocks(rounds, options) {
         var visibleOnly = rounds === "unhidden";
+        // 卡库生成按中控范围读取全文；未显式要求全文的调用仍保留原有单条长度策略。
+        var fullText = visibleOnly || !!(options && options.fullText);
         var chat;
         try {
             chat = await adrDGetFullChatMessagesForRead(visibleOnly ? "unhidden-content" : "recent-content");
@@ -1298,13 +1300,13 @@
 
             if (!blocks.length && !isUser && wholeFloor) {
                 var whole = text.trim();
-                if (whole) blocks.push(!visibleOnly && whole.length > 2500 ? whole.slice(0, 2500) + "…" : whole);
+                if (whole) blocks.push(!fullText && whole.length > 2500 ? whole.slice(0, 2500) + "…" : whole);
             }
 
-            // 用户消息通常没有 <content>，保留用户原文作为必要上下文，但限制长度。
+            // 用户消息通常没有 <content>，保留用户原文；全文读取时不额外截断。
             if (!blocks.length && isUser) {
                 var u = text.trim();
-                if (u) blocks.push(!visibleOnly && u.length > 1200 ? u.slice(0, 1200) + "…" : u);
+                if (u) blocks.push(!fullText && u.length > 1200 ? u.slice(0, 1200) + "…" : u);
             }
 
             if (blocks.length) {
@@ -5728,10 +5730,9 @@
         poolCount = Math.min(6, Math.max(1, poolCount));
         cardsPerPool = Math.min(10, Math.max(2, cardsPerPool));
 
-        var targetSlot = adrCdImportSlot();
-        var targetLabel = targetSlot ? ADR_CD_SLOT_FULL[targetSlot] : "未指定仓库";
         var recent = "";
-        try { recent = await recentContentBlocks(Math.min(12, Math.max(6, adrCdPickReadRounds()))); } catch (eRecent) {}
+        // 试运行和正式生成共享中控回看范围，完整保留过滤后的正文，不受投卡间隔影响。
+        try { recent = await recentContentBlocks(activeRange(), { fullText: true }); } catch (eRecent) {}
         if (generationChatKey !== adrDChatKey()) throw new Error("聊天已切换，已取消本次卡库生成");
         var precise = "";
         try { precise = await buildPreciseContext(); } catch (ePrecise) {}
@@ -5747,20 +5748,14 @@
             + "卡面写事实与意象，不写‘请让角色’‘现在发生’等指令，不写总结，不要重复。"
             + "严格使用以下格式：每个卡池先写一行「## 卡池名」，下面每行一张卡；卡池之间空一行。"
             + "不要输出除卡池标题和卡面以外的任何内容。";
+        // 背景在前、本轮要求在后；Anima 紧邻聊天正文之前，试运行与正式发送共用此顺序。
         var parts = [];
+        if (precise) parts.push("【角色卡、世界书与人设】\n" + precise);
+        if (animaHistory.text && adrDAnimaHistoryEnabledNow()) parts.push("【Anima 历史总结 · 仅作为卡库生成的历史背景】\n" + animaHistory.text);
+        if (recent) parts.push("【当前聊天最近正文】\n" + recent);
+        // 只输出卡库的协议已在 system 中声明，数量之后不再追加提示或资料。
         parts.push("【生成要求】\n" + request);
         parts.push("【数量】\n生成 " + poolCount + " 个卡池，每个卡池约 " + cardsPerPool + " 张卡，共约 " + (poolCount * cardsPerPool) + " 张。");
-        parts.push("【目标仓库】\n" + targetLabel + "。" + (targetSlot === "story"
-            ? "这是专属剧情库，优先围绕当前角色、关系和未完线索生成。"
-            : targetSlot === "common"
-                ? "这是通用库，卡面应尽量跨场景、跨角色可嫁接。"
-                : targetSlot === "nsfw"
-                    ? "这是 NSFW 库，只生成明确成人向、服务商允许的内容，并保持事件悬置，不替正文写完。"
-                    : "用户尚未指定仓库，请让内容本身保持可嫁接。"));
-        if (recent) parts.push("【当前聊天最近正文】\n" + adrCdTruncate(recent, 6000));
-        if (precise) parts.push("【角色卡、世界书与人设】\n" + adrCdTruncate(precise, 5000));
-        if (animaHistory.text && adrDAnimaHistoryEnabledNow()) parts.push("【Anima 历史总结 · 仅作为卡库生成的历史背景】\n" + animaHistory.text);
-        parts.push("现在只输出卡库正文。" );
 
         return {
             model: model,
@@ -6301,17 +6296,17 @@
             + '<div class="' + noteClass + '">这里调用择池／择卡 API 生成卡库。可以先「试运行」查看将发送给 AI 的完整内容；真正生成后只回填编辑器，不会自动保存。Anima 总结严格跟随中控：开启才读取并发送，关闭则不读取、不发送。</div>'
             + '<label>抽卡预设 · 生成卡库（支持多个版本）</label>'
             + adrCdAiPresetHTML("generate")
-            + '<div class="adr044-template-status">这是生成卡库的固定规则；下面的「本次生成要求」只影响当前这一轮。抽卡 AI 同时沿用中控的聊天读取规则、内容过滤，以及 Anima 历史总结的开关、条数和前缀。</div>'
+            + '<div class="adr044-template-status">这是生成卡库的固定规则；下面的「本次生成要求」只影响当前这一轮。卡库生成按中控指定范围读取正文，不额外截断；内容过滤及 Anima 历史总结的开关、条数和前缀也沿用中控。</div>'
             + '<label>本次生成要求（只影响当前这一轮）</label>'
             + '<textarea id="adr044-cd-gen-prompt" rows="3" placeholder="例如：为当前都市悬疑剧情生成围绕失踪案、旧账和暗线人物的事件卡；不填则按当前剧情自动生成"></textarea>'
             + '<label>生成卡池数（1–6）</label><input type="number" id="adr044-cd-gen-pools" min="1" max="6" step="1" value="3">'
             + '<label>每池卡数（2–10）</label><input type="number" id="adr044-cd-gen-cards" min="2" max="10" step="1" value="5">'
             + '<div class="adr044-template-status" id="adr044-cd-gen-status">可先试运行看看将发给 AI 的完整内容，或直接点「思考生成卡库」。</div>'
             + '<textarea id="adr044-cd-gen-preview" rows="8" readonly placeholder="点击「试运行（不花钱）」查看完整发送内容"></textarea>'
-            + '<div class="' + actionsClass + '"><button type="button" id="adr044-cd-gen-local">试运行（不花钱）</button><button type="button" id="adr044-cd-generate">🧠 思考生成卡库</button></div>'
-            + '<label>生成/导入落点（生成结果回填编辑器后，保存时挂入这里）</label>'
+            + '<div class="' + actionsClass + '"><button type="button" id="adr044-cd-gen-local">试运行（不花钱）</button><button type="button" id="adr044-cd-generate">思考生成卡库</button></div>'
+            + '<label>保存/导入归属（仅本地使用，不发送给 AI）</label>'
             + adrCdImportSlotSelectHTML()
-            + '<div class="adr044-template-status">可以先试运行；真正生成后只回填编辑器，确认内容后再保存。导入卡库也会沿用这里的落点。</div>'
+            + '<div class="adr044-template-status">生成结果只回填编辑器，确认并保存时才挂入所选仓库。导入卡库也会沿用此归属；此选项不影响 AI 生成要求。</div>'
             + secClose()
 
             + secOpen("三个仓库", true, "cd-repositories")

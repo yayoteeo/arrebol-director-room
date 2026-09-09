@@ -158,6 +158,6 @@ test("浏览器实测：浅色、深色及运行中修改 CSS，三套面板保�
         }
         assert.deepEqual(report["#plugin-title"], report["#native-title"]);
         assert.equal(report["#adr048-popup-body"].color, dark ? "rgb(238, 238, 238)" : "rgb(34, 34, 34)");
-        assert.equal(report["#check"].appearance, "auto");
+        assert.equal(report["#check"].appearance, "none", "复选框跟随酒馆配色，但统一自绘以免与原生样式叠画");
     }
 });

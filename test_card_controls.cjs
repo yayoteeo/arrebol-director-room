@@ -41,6 +41,7 @@ const hooks = `
         runDirector: run, manualInject: adrDRequestManualInject,
         setDirectorBody: function (fn) { adrDBuildApiBody = fn; },
         setRound: function (n) { adrDAssistantRoundCount = function () { return n; }; },
+        readRecent: recentContentBlocks,
         setRecent: function (fn) { recentContentBlocks = fn; },
         setSummary: function (fn) { adrDReadAnimaHistory = fn; },
         setPrecise: function (fn) { buildPreciseContext = fn; },
@@ -132,6 +133,16 @@ function setup(t, overrides = {}) {
         }
     };
 }
+
+test('生成卡库按钮只显示文字，抽屉与悬浮窗一致且保留真实按钮语义', t => {
+    const e = setup(t); e.render(true);
+    const buttons = e.doc.querySelectorAll('[id="adr044-cd-generate"]');
+    assert.equal(buttons.length, 2);
+    buttons.forEach(button => {
+        assert.equal(button.textContent, '思考生成卡库');
+        assert.equal(button.type, 'button');
+    });
+});
 
 test('旧抽卡预设保留，三类版本独立，名称正确转义且切换持久化', t => {
     const e = setup(t, { cdPreset: '原来的生成卡库规则' });
@@ -402,6 +413,176 @@ for (const stream of [false, true]) {
         assert.match(e.doc.getElementById('adr044-cd-gen-status').textContent, /已生成/);
     });
 }
+
+for (const animaEnabled of [false, true]) {
+    for (const stream of [false, true]) {
+        test('卡库生成发送顺序：设定 → Anima → 正文，要求/数量收尾；Anima=' + animaEnabled + '，流式=' + stream, async t => {
+            const e = setup(t, { animaHistoryEnabled: animaEnabled, cdStreamEnabled: stream, cdImportSlot: 'story' });
+            e.render(true);
+            const precise = '角色卡原文\n世界书原文\n用户人设原文';
+            const recent = '上一轮聊天正文\n\n---\n\n当前一轮聊天正文';
+            const request = '围绕失踪的旧信生成线索卡\n只写尚未完成的事件';
+            e.api.setPrecise(async () => precise);
+            e.api.setRecent(async () => recent);
+            e.input('adr044-cd-gen-prompt', request);
+            e.input('adr044-cd-gen-pools', '2');
+            e.input('adr044-cd-gen-cards', '4');
+
+            assert.equal(await e.api.generationPreview(), true);
+            assert.equal(e.calls.length, 0, '试运行不调用 API');
+            const preview = e.doc.getElementById('adr044-cd-gen-preview').value;
+            const systemHeading = '【系统预设 · system】\n';
+            const userHeading = '\n\n【发送上下文 · user】\n';
+            const userStart = preview.indexOf(userHeading);
+            assert.ok(userStart > preview.indexOf(systemHeading));
+            const systemText = preview.slice(preview.indexOf(systemHeading) + systemHeading.length, userStart);
+            const userText = preview.slice(userStart + userHeading.length);
+            const headings = ['【角色卡、世界书与人设】'];
+            const context = ['【角色卡、世界书与人设】\n' + precise];
+            if (animaEnabled) {
+                headings.push('【Anima 历史总结 · 仅作为卡库生成的历史背景】');
+                context.push('【Anima 历史总结 · 仅作为卡库生成的历史背景】\n' + e.summary);
+                assert.ok(userText.includes(e.summary), 'Anima 总结完整保留，不新增截断');
+            } else {
+                assert.doesNotMatch(userText, /Anima|ANIMA_BEGIN|ANIMA_END/);
+            }
+            headings.push('【当前聊天最近正文】', '【生成要求】', '【数量】');
+            context.push('【当前聊天最近正文】\n' + recent);
+            assert.deepEqual(userText.match(/^【[^】]+】$/gm), headings);
+            assert.ok(userText.startsWith(context.join('\n\n') + '\n\n【生成要求】'), '角色设定、Anima、聊天正文相邻且依次发送');
+            assert.ok(userText.endsWith('【生成要求】\n' + request + '\n\n【数量】\n生成 2 个卡池，每个卡池约 4 张卡，共约 8 张。'), '要求和数量是最后两段');
+            assert.match(systemText, /不要输出除卡池标题和卡面以外的任何内容/);
+
+            const generated = '## 旧信\n一只未拆开的信封出现在窗沿';
+            e.response(() => stream ? sseResponse([delta({ content: generated }), 'data: [DONE]\n\n']) : json(generated));
+            await e.api.generation();
+            assert.equal(e.calls.length, 1);
+            const body = e.calls[0].body;
+            assert.equal(body.stream, stream);
+            assert.deepEqual(body.messages, [{ role: 'system', content: systemText }, { role: 'user', content: userText }], '正式请求与试运行预览顺序及内容完全一致');
+            assert.equal(e.reads(), animaEnabled ? 2 : 0, '中控关闭时既不读也不发送 Anima');
+        });
+    }
+}
+
+test('卡库生成没有背景资料时省略空段，生成要求和数量仍位于末尾', async t => {
+    const e = setup(t, { animaHistoryEnabled: true }); e.render();
+    e.api.setPrecise(async () => '');
+    e.api.setRecent(async () => '');
+    e.api.setSummary(async () => ({ text: '' }));
+    const body = await e.api.generationBody();
+    const text = body.messages[1].content;
+    assert.deepEqual(text.match(/^【[^】]+】$/gm), ['【生成要求】', '【数量】']);
+    assert.ok(text.endsWith('【数量】\n生成 3 个卡池，每个卡池约 5 张卡，共约 15 张。'));
+});
+
+for (const stream of [false, true]) {
+    test('卡库生成按中控完整读取长正文，试运行与实际请求均无额外截断；流式=' + stream, async t => {
+        const e = setup(t, { range: '50', cdN: 1, cdStreamEnabled: stream });
+        e.api.renderAll();
+        e.input('adr044-range', 'custom', 'change');
+        e.input('adr044-custom', '1');
+        e.input('adr044-include-user-messages', true, 'change');
+        e.input('adr044-content-tags', '');
+        e.input('adr044-excluded-content-tags', 'private');
+        assert.equal(e.st.range, 'custom');
+        assert.equal(Number(e.st.customRange), 1);
+        const user = 'USER_BEGIN\n' + '用户的长正文。'.repeat(1000) + '\nUSER_END';
+        const character = 'CHAT_BEGIN\n' + '角色的长正文。'.repeat(1500) + '\nCHAT_END';
+        const precise = 'PRECISE_BEGIN\n' + '角色世界书及人设背景。'.repeat(700) + '\nPRECISE_END';
+        e.context.chat = [
+            { is_user: true, mes: '范围之外的用户楼层' },
+            { name: '角色', mes: '范围之外的角色楼层' },
+            { is_user: true, mes: '<private>用户不应发送的内容</private>' + user },
+            { name: '角色', mes: character + '<private>角色不应发送的内容</private>' }
+        ];
+        e.api.setRecent(e.api.readRecent);
+        e.api.setPrecise(async () => precise);
+        assert.equal(await e.api.generationPreview(), true);
+        assert.equal(e.calls.length, 0);
+        const preview = e.doc.getElementById('adr044-cd-gen-preview').value;
+        const userHeading = '\n\n【发送上下文 · user】\n';
+        assert.ok(preview.includes(userHeading));
+        const content = preview.slice(preview.indexOf(userHeading) + userHeading.length);
+        assert.ok(content.includes('【角色卡、世界书与人设】\n' + precise), '中控已组装的背景资料不再被卡库生成截至 5000 字符');
+        assert.ok(content.includes('【当前聊天最近正文】\n[用户｜楼层 2]\n' + user + '\n\n---\n\n[角色｜楼层 3]\n' + character), '保留选中楼层全文，不沿用单条 1200/2500 或合计 6000 字符上限');
+        assert.doesNotMatch(content, /范围之外|不应发送的内容|【目标仓库】/);
+        const generated = '## 旧信\n一只未拆开的信封出现在窗沿';
+        e.response(() => stream ? sseResponse([delta({ content: generated }), 'data: [DONE]\n\n']) : json(generated));
+        await e.api.generation();
+        assert.equal(e.calls.length, 1);
+        assert.equal(e.calls[0].body.messages[1].content, content, '试运行和实际请求使用同一份完整上下文');
+        assert.equal(e.calls[0].body.stream, stream);
+    });
+}
+
+for (const range of ['10', '50', 'custom', 'unhidden']) {
+    test('卡库生成的回看范围完全跟随中控：' + range + '，不受投卡间隔影响', async t => {
+        const e = setup(t, { range, customRange: 3, cdN: 1 }); e.render();
+        e.context.chat = Array.from({ length: 55 }, (_, i) => ({ name: '角色', mes: '正文编号' + i + '结束' }));
+        e.context.chat[1].is_hidden = true;
+        e.context.chat[2].is_system = true;
+        e.api.setRecent(e.api.readRecent);
+        e.api.setPrecise(async () => '');
+        const first = range === 'unhidden' ? 0 : 55 - (range === 'custom' ? 3 : Number(range));
+        const expected = Array.from({ length: 55 - first }, (_, i) => first + i)
+            .filter(i => range !== 'unhidden' || (i !== 1 && i !== 2));
+        for (const interval of [1, 50]) {
+            e.input('adr044-cd-n', String(interval));
+            const body = await e.api.generationBody();
+            const actual = Array.from(body.messages[1].content.matchAll(/正文编号(\d+)结束/g), match => Number(match[1]));
+            assert.deepEqual(actual, expected, '中控指定的楼层应全部读取且不超出范围，投卡间隔=' + interval);
+        }
+    });
+}
+
+test('卡库生成取消截断后仍遵守中控的用户消息开关、正文标签和排除标签', async t => {
+    const e = setup(t, { range: '10' });
+    e.api.renderAll();
+    e.input('adr044-content-tags', 'story');
+    e.input('adr044-excluded-content-tags', 'private');
+    e.context.chat = [
+        { is_user: true, mes: '用户原文<private>用户私密段</private>' },
+        { name: '角色', mes: '正文标签之外<story>标签内正文<private>角色私密段</private>完整结尾</story>' }
+    ];
+    e.api.setRecent(e.api.readRecent);
+    e.api.setPrecise(async () => '');
+    let content = (await e.api.generationBody()).messages[1].content;
+    assert.match(content, /标签内正文完整结尾/);
+    assert.doesNotMatch(content, /用户原文|正文标签之外|私密段/);
+    e.input('adr044-include-user-messages', true, 'change');
+    content = (await e.api.generationBody()).messages[1].content;
+    assert.match(content, /用户原文/);
+    assert.doesNotMatch(content, /正文标签之外|私密段/);
+});
+
+test('保存/导入归属不再发送给 AI，仍能在确认保存后挂入本地仓库', async t => {
+    const e = setup(t); e.render(true);
+    const select = e.doc.getElementById('adr044-cd-import-slot');
+    assert.match(select.previousElementSibling.textContent, /仅本地使用，不发送给 AI/);
+    let expected;
+    for (const slot of ['', 'story', 'common', 'nsfw']) {
+        e.input('adr044-cd-import-slot', slot, 'change');
+        assert.equal(e.st.cdImportSlot, slot);
+        const messages = JSON.stringify((await e.api.generationBody()).messages);
+        assert.doesNotMatch(messages, /【目标仓库】|这是专属剧情库|这是通用库|这是 NSFW 库|用户尚未指定仓库/);
+        if (expected === undefined) expected = messages;
+        else assert.equal(messages, expected, '本地归属不能改变发送给 AI 的要求');
+    }
+    e.input('adr044-cd-import-slot', 'story', 'change');
+    const generated = '## 门外\n门缝里多了一张尚未展开的纸';
+    e.response(() => json(generated));
+    await e.api.generation();
+    assert.equal(e.calls.length, 1);
+    assert.equal(JSON.stringify(e.calls[0].body.messages), expected);
+    const name = e.doc.getElementById('adr044-cd-lib-name').value;
+    assert.ok(name);
+    assert.equal(e.st.cdLibraries[name], undefined, '生成不自动保存');
+    e.click('adr044-cd-lib-save');
+    assert.equal(e.st.cdLibraries[name], generated);
+    assert.equal(e.st.cdLibHomes[name], 'story');
+    assert.ok(e.api.state().slots.story.includes(name));
+});
 
 test('抽卡请求有空闲超时及总时限，超时会中止而不是永久锁住按钮', async t => {
     const e = setup(t);
