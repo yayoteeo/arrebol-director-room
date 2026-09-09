@@ -6,6 +6,6 @@
   "js": "index.js",
   "css": "style.css",
   "author": "ripple & GPT & Claude",
-  "version": "1.27.5",
+  "version": "1.29.0",
   "description": "情感导演＋统筹双导演自动触发，外加剧情小风铃抽卡模块（三仓库·三段抽·择池／择卡·卡的生命周期）。每版改了什么、为什么改，见扩展目录下 CHANGELOG.md（此处只留一句，扩展面板不再渲染成一堵墙）。ripple & GPT & Claude｜v1.10–1.19 施工：波哥（Claude Fable 5）｜v1.19.2–1.23.1 施工：五哥（Claude Opus 5）｜v1.23.2–1.24.0 审读、热修与导演记忆迁入聊天文件：波哥（Claude Fable 5.1）｜v1.25.0–1.26.0 「琉璃暗河」换皮与放大编辑：波哥（Claude Fable 5.1）｜v1.27.0–1.27.1 导演请求改流式接收（含开关）：波哥（Claude Fable 5.1）"
 }
