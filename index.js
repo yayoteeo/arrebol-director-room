@@ -60,6 +60,16 @@
     var PLOT_PRESET = "你是 RP 剧组统筹。请阅读最近的聊天内容、跟组记录与投卡史，一次调用完成四件事，不写正文。\n\n一、派人：调度 NPC 进出场；把久未出场的冷板凳角色捞回场上；给最近投放的无专名事件卡选角——把「某人/口信/来客」铸成戏里真实存在的具体角色。\n二、顺场：检查转场衔接与叙事流畅，指出哪里硌牙、怎么顺。\n三、收线：盘点既有伏笔与已投的事件卡，点名哪条该兑现、哪条再压一压；撒出去的钩子不许无限堆积。\n四、急诊与验收：若因 NG 会诊被请来，先诊断重 roll 原因；若有此前指导，先用一两句评估执行情况。\n\n输出纪律（硬性）：每条意见必须带名字带条目——「让欠主角人情的老周把口信送到」合格；「推进剧情」「增加张力」这类纯口号视为不合格输出，禁止出现。\n不要替用户决定行动。不要写正文。不要写分析过程。输出必须短，不超过 350 字。\n\n固定输出格式：\n【派人】\n……\n\n【顺场】\n……\n\n【收线】\n……\n\n【本轮重点】\n……";
     // v1.10.0：红霞转岗统筹（派人/顺场/收线/急诊验收四职打包）。旧版预设原文留档，仅用于化石合并。
     var PLOT_PRESET_LEGACY = "你是 RP 剧情导演。请阅读最近的聊天内容和用户补充信息，只分析剧情推进、事件张力、伏笔与场景调度，不写正文。\n\n你需要判断：\n1. 当前剧情是否停滞、空转或重复。\n2. 场景是否需要推进、转场、插入事件、制造阻碍，还是维持压抑。\n3. 哪些伏笔可以轻轻回收，哪些伏笔不能急着揭开。\n4. NPC、环境、现实阻尼是否应该介入。\n5. 当前剧情的下一步应该发生什么“可执行事件”。\n6. 避免强行相遇、强行表白、强行救场、巧合堆叠。\n7. 不要替用户决定行动，只给世界和角色侧的推进方向。\n\n输出必须短，不超过 300 字。不要写正文。不要写分析过程。只给下一阶段剧情方向。\n\n固定输出格式：\n【剧情推进】\n……\n\n【事件抓手】\n……\n\n【避免】\n……";
+    var ADR_CD_DEFAULT_PRESET = "你是剧情抽卡卡库设计师。优先生成具体、克制、留白的悬置事件：写清有人、物、时刻或变化，保留发生了一半的空间，不替正文写完，不用口号，不重复；尽量不依赖专名，让卡面能嫁接到当前剧情。";
+    var ADR_CD_POOL_DEFAULT_PRESET = "你是抽卡助手的选池器。你只能看到卡池名单，看不到任何卡面内容。"
+            + "你的任务：判断此刻的剧情氛围，从名单中选出最适合此刻投放一张事件卡的卡池。"
+            + "【刚刚这一楼】就是此刻，氛围一律以它为准。"
+            + "【再往前几楼】只用来看这股势头是仍在持续、还是已经收场，不要拿它当此刻。"
+            + "【这个故事的整体调性】只用来判断某类情节允不允许发生，绝不作为此刻氛围的依据。";
+    var ADR_CD_CARD_DEFAULT_PRESET = "你是抽卡助手的选卡器。下面会给你几张候选事件卡，请挑出最适合此刻投放的那一张。"
+            + "【刚刚这一楼】就是此刻，贴合与否一律以它为准。"
+            + "【再往前几楼】只用来看这股势头是仍在持续、还是已经收场，不要拿它当此刻。"
+            + "【这个故事的整体调性】只用来判断某类情节允不允许发生，绝不作为此刻氛围的依据。";
     var DEFAULTS = {
         activeTab: "emotion",
         masterEnabled: true,
@@ -115,9 +125,21 @@
         // cdEnvelope 空串表示使用出厂信封 ADR_CD_DEFAULT_ENVELOPE）
         cdEnabled: false,
         cdN: 5,
+        cdAutoDraw: true,           // 关闭后仅手动抽卡，不自动调用抽卡/兑现 API
+        cdStreamEnabled: false,     // 与导演流式开关独立，兼容不支持 SSE 的中转
+        cdReplyTokens: 2000,        // 输出预算含思考，不裁剪 Anima 输入
         cdCooldown: 8,
         cdDepth: 2,
         cdMode: "blind",
+        cdPreset: ADR_CD_DEFAULT_PRESET,
+        cdPoolPreset: ADR_CD_POOL_DEFAULT_PRESET,
+        cdCardPreset: ADR_CD_CARD_DEFAULT_PRESET,
+        cdGenerationPresets: null,
+        cdPoolPresets: null,
+        cdCardPresets: null,
+        cdGenerationPresetCurrent: "默认",
+        cdPoolPresetCurrent: "默认",
+        cdCardPresetCurrent: "默认",
         // v1.11 三仓库槽的账号级默认值（新聊天开局继承这一份；聊天级覆盖存 chat_metadata）
         cdSlotDefaults: null,
         cdSlotOnDefaults: null,
@@ -698,9 +720,56 @@
         return p + name.charAt(0).toUpperCase() + name.slice(1);
     }
 
+    // 正在接收的文字只进界面，不触发 input/change 或把半份结果存进预设/卡库。
+    var adrDLiveOutputs = {};
+
+    function adrDWriteOutputValue(el, value) {
+        if (!el || el.value === value) return;
+        var top = el.scrollTop;
+        var follow = el.scrollHeight - el.clientHeight - top <= 32;
+        el.value = value;
+        el.scrollTop = follow ? el.scrollHeight : top;
+    }
+
+    function adrDSyncExpandedOutput(id, value) {
+        try {
+            var editor = rootDoc().querySelector("#adrx-editor");
+            if (editor && editor.__adrxSourceId === id && editor.__adrxSyncSource) editor.__adrxSyncSource(value);
+        } catch (e) {}
+    }
+
+    function adrDBeginLiveOutput(id, initial) {
+        var token = { id: id, text: String(initial || "") };
+        adrDLiveOutputs[id] = token;
+        adrDSetAllById(id, token.text);
+        return token;
+    }
+
+    function adrDWriteLiveOutput(token, text) {
+        if (!token || adrDLiveOutputs[token.id] !== token) return;
+        token.text = String(text || "");
+        adrDSetAllById(token.id, token.text);
+    }
+
+    function adrDEndLiveOutput(token) {
+        if (!token || adrDLiveOutputs[token.id] !== token) return;
+        delete adrDLiveOutputs[token.id];
+        try {
+            Array.prototype.slice.call(rootDoc().querySelectorAll("#" + token.id)).forEach(function (el) {
+                if (el.__adrDLiveReadOnly !== undefined) {
+                    el.readOnly = el.__adrDLiveReadOnly;
+                    delete el.__adrDLiveReadOnly;
+                }
+                el.removeAttribute("aria-busy");
+            });
+        } catch (e) {}
+        adrDSyncExpandedOutput(token.id, token.text);
+    }
+
     function setPreview(type, text) {
-        var pv = qForm("adr044-" + type + "-preview");
-        if (pv) pv.value = text || "";
+        var id = "adr044-" + type + "-preview";
+        if (adrDLiveOutputs[id]) adrDLiveOutputs[id].text = String(text || "");
+        adrDSetAllById(id, text || "");
         save(field(type, "preview"), text || "");
     }
 
@@ -873,8 +942,21 @@
         if (endpoint) save(p + "ApiEndpoint", endpoint.value || "");
         if (key) save(p + "ApiKey", key.value || "");
         if (model) save(p + "Model", model.value || "");
-        if (preset) save(p + "Preset", preset.value || "");
-        if (preview) save(p + "Preview", preview.value || "");
+        if (preset) {
+            if (type === "cd") adrCdStoreAiPresetText("generate", preset.value || "");
+            else save(p + "Preset", preset.value || "");
+        }
+        if (preview && !adrDLiveOutputs[preview.id]) save(p + "Preview", preview.value || "");
+        if (type === "cd") {
+            ["pool", "card"].forEach(function (kind) {
+                var el = qForm(adrCdAiPresetConfig(kind).editor);
+                if (el) adrCdStoreAiPresetText(kind, el.value || "");
+            });
+            var cdStream = qForm("adr044-cd-stream");
+            if (cdStream) save("cdStreamEnabled", !!cdStream.checked);
+            var cdBudget = qForm("adr044-cd-reply-tokens");
+            if (cdBudget) save("cdReplyTokens", Math.min(32000, Math.max(200, Math.round(Number(cdBudget.value)) || ADR_CD_REPLY_TOKENS)));
+        }
 
         var autoTrigger = qForm("adr044-auto-trigger-" + type);
         if (autoTrigger) save(type === "plot" ? "autoTriggerPlot" : "autoTriggerEmotion", !!autoTrigger.checked);
@@ -1407,7 +1489,7 @@
     }
 
     function adrDAnimaHistoryControls(st, checkClass) {
-        return '<label class="' + checkClass + '"><input type="checkbox" id="adr044-anima-history-enabled"' + (st.animaHistoryEnabled ? ' checked' : '') + '> 读取 Anima 历史总结（同时发给情感导演和统筹）</label>'
+        return '<label class="' + checkClass + '"><input type="checkbox" id="adr044-anima-history-enabled"' + (st.animaHistoryEnabled ? ' checked' : '') + '> 读取 Anima 历史总结（情感导演、统筹、择池、择卡、兑现判断和 AI 生成卡库均遵循此开关）</label>'
             + '<small class="adr-anima-history-status" role="status">' + esc(adrDAnimaStatusText()) + '</small>'
             + '<label>读取最近多少条总结切片（默认 20；0 = 全部，会增加请求长度）</label>'
             + '<input type="number" id="adr044-anima-history-limit" min="0" step="1" value="' + adrDAnimaHistoryLimit(st.animaHistoryLimit) + '">'
@@ -1468,9 +1550,24 @@
         };
     }
 
+    function adrDAnimaHistoryEnabledNow() {
+        try {
+            var control = qForm("adr044-anima-history-enabled");
+            if (control) return !!control.checked;
+        } catch (e) {}
+        try { return !!settings().animaHistoryEnabled; } catch (e2) { return false; }
+    }
+
+    async function adrDReadAnimaHistoryIfEnabled() {
+        if (!adrDAnimaHistoryEnabledNow()) return { text: "", status: "中控已关闭 Anima 历史总结读取" };
+        return adrDReadAnimaHistory();
+    }
+
     async function adrDReadAnimaHistory() {
+        // 每次真正组装请求前都从中控同步一次，避免 checkbox 改了但旧设置仍被带入。
+        try { syncShared(); } catch (eSyncAnima) {}
         var st = settings();
-        if (!st.animaHistoryEnabled) return { text: "", status: "未开启读取 Anima 历史总结" };
+        if (!adrDAnimaHistoryEnabledNow()) return { text: "", status: "中控已关闭 Anima 历史总结读取" };
         var context = ctx();
         var chatId = context.chatId || (context.getCurrentChatId && context.getCurrentChatId());
         var chatKey = adrDChatKey();
@@ -1481,14 +1578,18 @@
         }
         try {
             var bookName = await helper.getChatWorldbookName("current");
+            if (!adrDAnimaHistoryEnabledNow()) return { text: "", status: "中控已关闭 Anima 历史总结读取" };
             if (!bookName && typeof helper.getWorldbookNames === "function") {
                 var expectedName = String(chatId).replace(/\.(json|jsonl)$/i, "");
                 var names = await helper.getWorldbookNames();
+                if (!adrDAnimaHistoryEnabledNow()) return { text: "", status: "中控已关闭 Anima 历史总结读取" };
                 if (Array.isArray(names) && names.indexOf(expectedName) !== -1) bookName = expectedName;
             }
             if (!bookName) return { text: "", status: "当前聊天没有绑定世界书，也未找到同名总结存档" };
             var entries = await helper.getWorldbook(bookName);
+            if (!adrDAnimaHistoryEnabledNow()) return { text: "", status: "中控已关闭 Anima 历史总结读取" };
             if (chatKey !== adrDChatKey()) return { text: "", status: "聊天已切换，已丢弃旧聊天的总结" };
+            st = settings();
             var result = adrDFormatAnimaHistory(entries, chatId, st.animaHistoryLimit);
             if (!result.count) return { text: "", status: "世界书「" + bookName + "」中没有属于当前聊天的有效 Anima 总结；旧分支请先在 Anima 历史总结管理中迁移" };
             var prefix = String(st.animaHistoryPrefix || "").trim();
@@ -1772,7 +1873,7 @@
         };
     }
 
-    async function callAPI(type, extra) {
+    async function callAPI(type, extra, liveOutput) {
         var st = settings();
         var p = prefixOf(type);
 
@@ -1830,8 +1931,13 @@
                     armIdleTimer();
                     col.push(txt);
                     if (col.mode() !== "sse") return;
+                    if (col.error()) throw col.error();
                     var got = col.content().length;
                     var thought = col.reasoningChars();
+                    if (liveOutput) {
+                        if (liveOutput.chatKey !== adrDChatKey()) throw new Error("聊天已切换，本次分析已取消");
+                        if (got) adrDWriteLiveOutput(liveOutput, col.content());
+                    }
                     if (got) status(type, "正在分析…（已收到 " + got + " 字）", "#8ed99d");
                     else if (thought) status(type, "正在分析…（模型思考中，" + thought + " 字）", "#8ed99d");
                 });
@@ -1839,6 +1945,7 @@
                 raw = col.raw();
             }
         } catch (eFetch) {
+            if (localAborter) { try { localAborter.abort(); } catch (eAbortRead) {} }
             if (didTimeout && eFetch && eFetch.name === "AbortError") {
                 var timeoutErr = new Error(col.chunks()
                     ? "流式接收中断：" + (ADR_D_STREAM_IDLE_MS / 1000) + " 秒没有新内容，请检查 API、中转站或稍后重试"
@@ -1854,9 +1961,9 @@
         if (!res.ok) throw new Error("API " + res.status + "：" + String(raw || "").slice(0, 220));
 
         if (col.mode() === "sse") {
+            if (col.error()) throw col.error();
             var streamed = String(col.content() || "").trim();
             if (streamed) return streamed;
-            if (col.error()) throw col.error();
             if (!col.chunks()) throw new Error("流式响应里没有可解析的内容：" + raw.slice(0, 220));
             throw new Error("无法解析响应：正文为空" + adrDEmptyContentHint(col.reasoningChars(), col.finish()));
         }
@@ -1898,7 +2005,7 @@
             if (r) r.disabled = processing;
             if (s) s.disabled = !processing;
             if (c) c.disabled = !has;
-            if (inj) inj.disabled = !has;
+            if (inj) inj.disabled = processing || !has;
         });
     }
 
@@ -1931,11 +2038,15 @@
         adr048SetFabBusy(true);
         status(type, "正在分析…", "#8ed99d");
 
+        var liveOutput = adrDBeginLiveOutput("adr044-" + type + "-preview", "");
+        liveOutput.chatKey = adrDChatKey();
+        adrxRevealModuleFor(liveOutput.id);
         var success = false;
         var failureKind = "api";
         var failureMsg = "";
         try {
-            var out = await callAPI(type, extra || "");
+            var out = await callAPI(type, extra || "", liveOutput);
+            if (liveOutput.chatKey !== adrDChatKey()) throw new Error("聊天已切换，本次分析已取消");
             setPreview(type, out);
             adrDClearExtraInstruction(type);
             status(type, "分析完成 ✓（补充指令已清空）", "#8ed99d");
@@ -1973,6 +2084,11 @@
             success = false;
         }
 
+        if (!success) {
+            // 失败/打断的半份稿不成为可注入结果，恢复上一份完整稿。
+            adrDWriteLiveOutput(liveOutput, settings()[field(type, "preview")] || "");
+        }
+        adrDEndLiveOutput(liveOutput);
         processing = false;
         aborter = null;
         adr048SetFabBusy(false);
@@ -3278,7 +3394,7 @@
     // v1.11 三仓库：专属剧情库（跟角色卡）／通用库／NSFW 库，各自勾选启用。
     //       三段抽 = 掷仓库（启用者均等）→ 掷卡池（池内均等）→ 掷卡（冷却区不复用）。
     // 纪律：与导演共用全量计数、chatKey 与 API 预设机器；耳机通道独立 key；基准线体系零接触；
-    //       失败保拍（不投出不推进 lastDrawAt）；DS 任何异常当场降级盲抽，抽卡器永不停摆。
+    //       自动每 N 楼尝试一次；失败不改卡龄，但记住本拍，避免轮询重复扣费。
     //       v1.11 铁则：刷新永不覆盖正在输入的控件；编辑区只在换库/导入/换聊时回灌。
     // 需求与终裁：江 ｜ 架构与施工：波哥（Claude Fable 5）｜ 原体血统：ripple & GPT & Claude
 
@@ -3287,11 +3403,19 @@
     var ADR_CD_META_KEY = "arrebol_d_cd";
     var ADR_CD_HISTORY_MAX = 5;
     var ADR_CD_RECENT_MAX = 32;
-    var ADR_CD_PICK_TIMEOUT_MS = 8000;
-    // v1.23.3：小眼睛的答复额度。此前点池 30、择卡与兑现 10——会思考的模型把这点额度先花在思考上，
-    // 回来是空的，于是永远降级盲抽。提到 200：答复照旧逐字校验、多一个字作废，只是不再把思考也掐死；
-    // 对不思考的模型（DeepSeek-chat 之类）没有任何区别，它本来就只回那几个字。
-    var ADR_CD_REPLY_TOKENS = 200;
+    var ADR_CD_PICK_TIMEOUT_MS = 60000; // 空闲超时；流式持续到达时续期，总时长另有上限
+    // 预算包含思考与最终答复，与 Anima 输入长度无关；设置中可调整。
+    var ADR_CD_REPLY_TOKENS = 2000;
+    // AI 卡库生成是手动触发的长请求，复用择池／择卡 API，但给会思考的模型更充足的时间与输出额度。
+    var ADR_CD_LIB_GEN_IDLE_MS = 120000;
+    var ADR_CD_LIB_GEN_REPLY_TOKENS = 4000;
+    var adrCdLibraryGenerationRunning = false;
+    var adrCdGeneratedDraft = null; // 仅当前页面/聊天的待确认草稿；不冒充原卡库触发自动保存。
+    function adrCdCurrentDraft() {
+        if (adrCdGeneratedDraft && adrCdGeneratedDraft.chatKey !== adrDChatKey()) adrCdGeneratedDraft = null;
+        return adrCdGeneratedDraft;
+    }
+    var adrCdLibraryGenerationPreviewRunning = false;
 
     // 三个仓库槽位。story 跟角色卡走，common 打底，nsfw 单独一格由住户自己填。
     var ADR_CD_SLOTS = ["story", "common", "nsfw"];
@@ -3474,7 +3598,7 @@
     function adrCdN() {
         var n = Math.round(Number(settings().cdN));
         if (!Number.isFinite(n)) n = 5;
-        return Math.min(20, Math.max(1, n));
+        return Math.min(50, Math.max(1, n));
     }
 
     function adrCdDepth() {
@@ -3521,6 +3645,117 @@
         if (slot && ADR_CD_SLOTS.indexOf(slot) >= 0) homes[name] = slot;
         else delete homes[name];
         save("cdLibHomes", homes);
+    }
+
+    // 三类 AI 预设各自保存命名版本；当前文本镜像到旧字段，兼容原有配置。
+    function adrCdAiPresetConfig(kind) {
+        var configs = {
+            generate: { text: "cdPreset", bank: "cdGenerationPresets", current: "cdGenerationPresetCurrent", editor: "adr044-cd-preset", label: "生成卡库", fallback: ADR_CD_DEFAULT_PRESET },
+            pool: { text: "cdPoolPreset", bank: "cdPoolPresets", current: "cdPoolPresetCurrent", editor: "adr044-cd-pool-preset", label: "择池", fallback: ADR_CD_POOL_DEFAULT_PRESET },
+            card: { text: "cdCardPreset", bank: "cdCardPresets", current: "cdCardPresetCurrent", editor: "adr044-cd-card-preset", label: "择卡", fallback: ADR_CD_CARD_DEFAULT_PRESET }
+        };
+        if (!Object.prototype.hasOwnProperty.call(configs, kind)) throw new Error("未知抽卡预设类型");
+        return configs[kind];
+    }
+
+    function adrCdAiPresets(kind) {
+        var cfg = adrCdAiPresetConfig(kind), st = settings(), bank = st[cfg.bank];
+        if (!Array.isArray(bank) || !bank.length) {
+            bank = [{ name: "默认", text: typeof st[cfg.text] === "string" ? st[cfg.text] : cfg.fallback }];
+            save(cfg.current, bank[0].name);
+        }
+        // 用数组记录用户命名，__proto__ 等名称也不会成为对象属性。
+        var clean = [];
+        bank.forEach(function (p) {
+            if (!p || typeof p.name !== "string" || !p.name.trim() || typeof p.text !== "string") return;
+            if (!clean.some(function (v) { return v.name === p.name.trim(); })) clean.push({ name: p.name.trim(), text: p.text });
+        });
+        if (!clean.length) clean.push({ name: "默认", text: cfg.fallback });
+        var current = clean.find(function (p) { return p.name === st[cfg.current]; });
+        if (!current) { current = clean[0]; save(cfg.current, current.name); save(cfg.text, current.text); }
+        if (JSON.stringify(st[cfg.bank]) !== JSON.stringify(clean)) save(cfg.bank, clean);
+        return clean;
+    }
+
+    function adrCdAiPresetText(kind) {
+        var cfg = adrCdAiPresetConfig(kind);
+        adrCdAiPresets(kind);
+        return String(settings()[cfg.text] || "").trim() || cfg.fallback;
+    }
+
+    function adrCdStoreAiPresetText(kind, text) {
+        var cfg = adrCdAiPresetConfig(kind), bank = adrCdAiPresets(kind), current = settings()[cfg.current];
+        if (settings()[cfg.text] === String(text || "") && bank.some(function (p) { return p.name === current && p.text === String(text || ""); })) return;
+        bank.forEach(function (p) { if (p.name === current) p.text = String(text || ""); });
+        save(cfg.text, String(text || ""));
+        save(cfg.bank, bank);
+    }
+
+    function adrCdRefreshAiPreset(kind, force) {
+        var cfg = adrCdAiPresetConfig(kind), bank = adrCdAiPresets(kind), st = settings(), id = "adr044-cd-ai-" + kind;
+        var options = bank.map(function (p) { return opt(esc(st[cfg.current]), esc(p.name), esc(p.name)); }).join("");
+        try {
+            Array.prototype.slice.call(rootDoc().querySelectorAll("#" + id + "-select")).forEach(function (el) {
+                if (force) { el.innerHTML = options; el.value = st[cfg.current]; }
+                else adrCdFillSelect(el, options, st[cfg.current], adrCdOptSig(kind, bank.map(function (p) { return p.name; }), st[cfg.current]));
+            });
+        } catch (e) {}
+        if (force) {
+            adrDSetAllById(cfg.editor, st[cfg.text]);
+            adrDSetAllById(id + "-name", st[cfg.current]);
+        } else {
+            adrCdSetValueSafe(cfg.editor, st[cfg.text]);
+            adrCdSetValueSafe(id + "-name", st[cfg.current]);
+        }
+    }
+
+    function adrCdApplyAiPreset(kind, name) {
+        var cfg = adrCdAiPresetConfig(kind), bank = adrCdAiPresets(kind);
+        var preset = bank.find(function (p) { return p.name === name; });
+        if (!preset) return false;
+        save(cfg.current, preset.name);
+        save(cfg.text, preset.text);
+        saveNow();
+        adrCdRefreshAiPreset(kind, true);
+        adrCdSetTextAll("adr044-cd-ai-" + kind + "-status", "正在使用「" + preset.name + "」；编辑会自动保存到此版本。", "#8ed99d");
+        return true;
+    }
+
+    function adrCdSaveAiPresetAs(kind) {
+        var cfg = adrCdAiPresetConfig(kind), id = "adr044-cd-ai-" + kind;
+        var nameEl = qForm(id + "-name"), textEl = qForm(cfg.editor);
+        var name = String(nameEl && nameEl.value || "").trim();
+        if (!name) { adrCdSetTextAll(id + "-status", "请先填写版本名称。", "#d4726a"); return false; }
+        var bank = adrCdAiPresets(kind), existing = bank.find(function (p) { return p.name === name; });
+        if (existing && name !== settings()[cfg.current] && !rootWin().confirm("覆盖已有的" + cfg.label + "预设「" + name + "」？")) return false;
+        var text = textEl ? String(textEl.value || "") : String(settings()[cfg.text] || "");
+        if (existing) existing.text = text;
+        else bank.push({ name: name, text: text });
+        save(cfg.bank, bank);
+        adrCdApplyAiPreset(kind, name);
+        adrCdSetTextAll(id + "-status", "已保存「" + name + "」，共 " + bank.length + " 个版本；版本数量不设上限。", "#8ed99d");
+        return true;
+    }
+
+    function adrCdDeleteAiPreset(kind) {
+        var cfg = adrCdAiPresetConfig(kind), bank = adrCdAiPresets(kind), name = settings()[cfg.current];
+        if (bank.length <= 1) { adrCdSetTextAll("adr044-cd-ai-" + kind + "-status", "至少保留一个版本；可改名保存新版本。", "#d4726a"); return false; }
+        if (!rootWin().confirm("删除" + cfg.label + "预设「" + name + "」？其他用途的预设不会受影响。")) return false;
+        bank = bank.filter(function (p) { return p.name !== name; });
+        save(cfg.bank, bank);
+        adrCdApplyAiPreset(kind, bank[0].name);
+        return true;
+    }
+
+    function adrCdAiPresetHTML(kind) {
+        var cfg = adrCdAiPresetConfig(kind), bank = adrCdAiPresets(kind), st = settings(), id = "adr044-cd-ai-" + kind;
+        return '<div class="adr044-cd-ai-presets"><div class="adr044-template-compact">'
+            + '<select id="' + id + '-select" aria-label="' + cfg.label + '预设版本">' + bank.map(function (p) { return opt(esc(st[cfg.current]), esc(p.name), esc(p.name)); }).join("") + '</select>'
+            + '<input type="text" id="' + id + '-name" aria-label="' + cfg.label + '预设名称" value="' + esc(st[cfg.current]) + '" placeholder="新版本名，例如：悬疑 v2">'
+            + '<div class="adr044-template-mini-actions"><button type="button" id="' + id + '-save">保存 / 另存版本</button><button type="button" id="' + id + '-delete">删除版本</button></div></div>'
+            + '<label for="' + cfg.editor + '">' + cfg.label + '预设正文</label>'
+            + '<textarea id="' + cfg.editor + '" rows="5">' + esc(st[cfg.text] || "") + '</textarea>'
+            + '<div class="adr044-template-status" id="' + id + '-status">切换立即生效；编辑自动保存到当前版本。要保留旧版，请先换名另存，再编辑新版本。</div></div>';
     }
 
     function adrCdEnvelopes() {
@@ -3695,6 +3930,7 @@
         } catch (eHome) {}
         return {
             lastDrawAt: Number.isFinite(Number(o.lastDrawAt)) ? Number(o.lastDrawAt) : -1,
+            lastAutoAttemptAt: Number.isFinite(Number(o.lastAutoAttemptAt)) ? Number(o.lastAutoAttemptAt) : -1,
             slots: slots,
             slotOn: slotOn,
             history: Array.isArray(o.history) ? o.history.slice(-ADR_CD_HISTORY_MAX) : [],
@@ -3865,26 +4101,109 @@
         return "";
     }
 
-    async function adrCdPickPoolViaDS(slotPools, state) {
-        var st = settings();
-        var endpoint = st.cdApiEndpoint || "";
-        var key = st.cdApiKey || "";
-        var model = st.cdModel || "deepseek-chat";
-        if (!endpoint) throw new Error("未填写择池 API 地址");
-        var url = chatUrl(endpoint);
-        if (!url) throw new Error("择池 API 地址无效");
+    function adrCdReplyTokens() {
+        var value = Math.round(Number(settings().cdReplyTokens));
+        return Number.isFinite(value) ? Math.max(200, Math.min(32000, value)) : ADR_CD_REPLY_TOKENS;
+    }
 
+    function adrCdAssertRequestChat(chatKey) {
+        if (chatKey === adrDChatKey()) return;
+        var error = new Error("聊天已切换，本次抽卡 API 操作已取消");
+        error.adrCdCanceled = true;
+        throw error;
+    }
+
+    function adrCdChoiceBody(sys, parts, temperature) {
+        return {
+            model: settings().cdModel || "deepseek-chat",
+            messages: [{ role: "system", content: sys }, { role: "user", content: parts.join("\n\n") }],
+            temperature: temperature == null ? 0.4 : temperature,
+            max_tokens: adrCdReplyTokens(),
+            stream: settings().cdStreamEnabled === true
+        };
+    }
+
+    // 抽卡、兑现、生成共用同一传输层：支持 SSE/整份 JSON、思考增量、空闲与总超时。
+    async function adrCdRequestApi(body, label, options) {
+        options = options || {};
+        var st = settings(), url = chatUrl(st.cdApiEndpoint || "");
+        if (!st.cdApiEndpoint) throw new Error("请先填写抽卡 API 地址");
+        if (!url) throw new Error("抽卡 API 地址无效");
+        var chatKey = options.chatKey == null ? adrDChatKey() : options.chatKey;
+        adrCdAssertRequestChat(chatKey);
+        var aborter = typeof AbortController !== "undefined" ? new AbortController() : null;
+        var idleMs = options.idleMs || ADR_CD_PICK_TIMEOUT_MS;
+        var idleTimer = null, hardTimer = null, timedOut = false;
+        function abortTimedOut() { timedOut = true; if (aborter) aborter.abort(); }
+        function armIdle() {
+            if (!aborter) return;
+            if (idleTimer) clearTimeout(idleTimer);
+            idleTimer = setTimeout(abortTimedOut, idleMs);
+        }
+        var col = adrDStreamCollector();
+        function progress(text) {
+            if (options.onProgress) options.onProgress({ text: text == null ? col.content() : text, reasoningChars: col.reasoningChars() });
+        }
+        try {
+            armIdle();
+            if (aborter) hardTimer = setTimeout(abortTimedOut, options.hardMs || 240000);
+            var headers = { "Content-Type": "application/json", "Accept": body.stream ? "text/event-stream, application/json" : "application/json" };
+            if (st.cdApiKey) headers.Authorization = "Bearer " + st.cdApiKey;
+            var request = { method: "POST", headers: headers, body: JSON.stringify(body) };
+            if (aborter) request.signal = aborter.signal;
+            progress("");
+            var res = await fetch(url, request);
+            adrCdAssertRequestChat(chatKey);
+            if (!res.ok) throw new Error(label + " API " + res.status + "：" + String(await res.text()).slice(0, 180));
+            await adrDReadBody(res, function (chunk) {
+                adrCdAssertRequestChat(chatKey);
+                armIdle();
+                col.push(chunk);
+                if (col.error()) throw col.error();
+                if (col.mode() === "sse") progress();
+            });
+            col.end();
+            adrCdAssertRequestChat(chatKey);
+            if (col.error()) throw col.error();
+            var out = "", hint = "";
+            if (col.mode() === "sse") {
+                out = String(col.content() || "").trim();
+                hint = adrDEmptyContentHint(col.reasoningChars(), col.finish());
+            } else {
+                var data;
+                try { data = JSON.parse(col.raw()); } catch (eJson) { throw new Error(label + " API 返回非 JSON / SSE"); }
+                if (data && data.error) throw new Error(label + " API：" + String(data.error.message || data.error).slice(0, 180));
+                out = String(parseResponse(data) || "").trim();
+                hint = adrCdEmptyReplyHint(data, out);
+            }
+            if (!out) throw new Error(label + "未返回有效正文" + hint + "；可提高抽卡 API 输出预算或调整模型思考设置");
+            progress(out);
+            return out;
+        } catch (e) {
+            if (aborter) { try { aborter.abort(); } catch (eAbort) {} }
+            if (timedOut) throw new Error(label + "请求超时（空闲 " + (idleMs / 1000) + " 秒或达到总时限），请检查 API / 模型");
+            throw e;
+        } finally {
+            if (idleTimer) clearTimeout(idleTimer);
+            if (hardTimer) clearTimeout(hardTimer);
+        }
+    }
+
+    function adrCdSelectionProgress(label, info) {
+        var message = info.text ? "接收中…\n" + info.text : info.reasoningChars ? "模型思考中（已收到 " + info.reasoningChars + " 字思考增量）…" : "等待 API 返回…";
+        adrCdSetTextAll("adr044-cd-draw-output", label + " · " + message, "#8ed99d");
+    }
+
+    async function adrCdBuildPoolBody(slotPools, state) {
+        try { syncShared(); } catch (eSync) {}
+        var requestChatKey = adrDChatKey();
         var menu = slotPools.map(function (p) { return p.menuName; });
         var recentPools = (state.history || []).slice(-3).map(function (h) { return h && h.pool; }).filter(Boolean);
 
         // v1.19.2：NSFW 双向硬门。菜单里没有 NSFW 池时整段不注入——省 token，也不把概念平白种进去。
         var hasNsfw = menu.some(function (m) { return String(m).indexOf("NSFW·") === 0; });
 
-        var sys = "你是抽卡助手的选池器。你只能看到卡池名单，看不到任何卡面内容。"
-            + "你的任务：判断此刻的剧情氛围，从名单中选出最适合此刻投放一张事件卡的卡池。"
-            + "【刚刚这一楼】就是此刻，氛围一律以它为准。"
-            + "【再往前几楼】只用来看这股势头是仍在持续、还是已经收场，不要拿它当此刻。"
-            + "【这个故事的整体调性】只用来判断某类情节允不允许发生，绝不作为此刻氛围的依据。";
+        var sys = adrCdAiPresetText("pool") + "\n\n【输出与候选约束】\n";
 
         if (hasNsfw) {
             sys += "名单中以「NSFW·」开头的卡池是例外通道，不参与上述常规判断，改用下面这条双向规则。"
@@ -3923,57 +4242,27 @@
         if (recentPools.length) parts.push("【最近 3 张已投卡来自的卡池】\n" + recentPools.join("、"));
         var precise = "";
         try { precise = await buildPreciseContext(); } catch (ePc) {}
+        var animaHistory = { text: "" };
+        try { animaHistory = await adrDReadAnimaHistoryIfEnabled(); } catch (eAnima) {}
+        if (animaHistory.text && adrDAnimaHistoryEnabledNow()) {
+            parts.push("【Anima 历史总结 · 仅辅助判断整体调性】\n" + animaHistory.text);
+        }
         if (precise) {
             parts.push("【这个故事的整体调性 · 只用来判断某类情节允不允许发生，不是此刻的依据】\n"
                 + adrCdTruncate(precise, 2000));
         }
         parts.push("请回复一个卡池名。");
 
-        var aborterCd = typeof AbortController !== "undefined" ? new AbortController() : null;
-        var timeoutId = null;
-        var didTimeout = false;
-        if (aborterCd) {
-            timeoutId = setTimeout(function () {
-                didTimeout = true;
-                try { aborterCd.abort(); } catch (eA) {}
-            }, ADR_CD_PICK_TIMEOUT_MS);
-        }
+        adrCdAssertRequestChat(requestChatKey);
+        return adrCdChoiceBody(sys, parts);
+    }
 
-        var headers = { "Content-Type": "application/json" };
-        if (key) headers.Authorization = "Bearer " + key;
-        var opts = {
-            method: "POST",
-            headers: headers,
-            body: JSON.stringify({
-                model: model,
-                messages: [
-                    { role: "system", content: sys },
-                    { role: "user", content: parts.join("\n\n") }
-                ],
-                temperature: 0.4,
-                max_tokens: ADR_CD_REPLY_TOKENS,
-                stream: false
-            })
-        };
-        if (aborterCd) opts.signal = aborterCd.signal;
-
-        var raw;
-        try {
-            var res = await fetch(url, opts);
-            raw = await res.text();
-            if (!res.ok) throw new Error("择池 API " + res.status + "：" + String(raw || "").slice(0, 160));
-        } catch (eFetch) {
-            if (didTimeout && eFetch && eFetch.name === "AbortError") throw new Error("择池超时（" + (ADR_CD_PICK_TIMEOUT_MS / 1000) + "s）");
-            throw eFetch;
-        } finally {
-            if (timeoutId) clearTimeout(timeoutId);
-        }
-
-        var data;
-        try { data = JSON.parse(raw); } catch (eJson) { throw new Error("择池返回非 JSON"); }
-        var out = parseResponse(data);
-        var pick = adrCdSanitizePickResponse(out, menu);
-        if (!pick) throw new Error("点池答复无效：" + adrCdTruncate(out, 40) + adrCdEmptyReplyHint(data, out));
+    async function adrCdPickPoolViaDS(slotPools, state) {
+        var chatKey = adrDChatKey();
+        var body = await adrCdBuildPoolBody(slotPools, state);
+        var out = await adrCdRequestApi(body, "择池", { chatKey: chatKey, onProgress: function (info) { adrCdSelectionProgress("择池", info); } });
+        var pick = adrCdSanitizePickResponse(out, slotPools.map(function (p) { return p.menuName; }));
+        if (!pick) throw new Error("点池答复无效：" + adrCdTruncate(out, 80));
         return pick;
     }
 
@@ -4045,19 +4334,12 @@
         return head + adrCdTruncate(c.card, 120);
     }
 
-    async function adrCdPickCardViaDS(cands, state) {
-        var st = settings();
-        var endpoint = st.cdApiEndpoint || "";
-        if (!endpoint) throw new Error("未填写择池 API 地址");
-        var url = chatUrl(endpoint);
-        if (!url) throw new Error("择池 API 地址无效");
-
+    async function adrCdBuildCardBody(cands, state) {
+        try { syncShared(); } catch (eSync) {}
+        var requestChatKey = adrDChatKey();
         var hasNsfw = cands.some(function (c) { return c.slot === "nsfw"; });
 
-        var sys = "你是抽卡助手的选卡器。下面会给你几张候选事件卡，请挑出最适合此刻投放的那一张。"
-            + "【刚刚这一楼】就是此刻，贴合与否一律以它为准。"
-            + "【再往前几楼】只用来看这股势头是仍在持续、还是已经收场，不要拿它当此刻。"
-            + "【这个故事的整体调性】只用来判断某类情节允不允许发生，绝不作为此刻氛围的依据。";
+        var sys = adrCdAiPresetText("card") + "\n\n【输出与候选约束】\n";
 
         if (hasNsfw) {
             sys += "标注为「NSFW·」的候选是例外通道，其卡面不展示给你，改用下面这条双向规则判断。"
@@ -4084,58 +4366,29 @@
         parts.push("【候选卡】\n" + cands.map(function (c, i) { return adrCdCandidateLine(i, c); }).join("\n"));
         var precise = "";
         try { precise = await buildPreciseContext(); } catch (ePc) {}
+        var animaHistory = { text: "" };
+        try { animaHistory = await adrDReadAnimaHistoryIfEnabled(); } catch (eAnima) {}
+        if (animaHistory.text && adrDAnimaHistoryEnabledNow()) {
+            parts.push("【Anima 历史总结 · 仅辅助判断整体调性】\n" + animaHistory.text);
+        }
         if (precise) {
             parts.push("【这个故事的整体调性 · 只用来判断某类情节允不允许发生，不是此刻的依据】\n"
                 + adrCdTruncate(precise, 2000));
         }
         parts.push("请只回复一个数字（1-" + cands.length + "）。");
 
-        var aborterC = typeof AbortController !== "undefined" ? new AbortController() : null;
-        var timeoutC = null, didTimeoutC = false;
-        if (aborterC) {
-            timeoutC = setTimeout(function () {
-                didTimeoutC = true;
-                try { aborterC.abort(); } catch (eA) {}
-            }, ADR_CD_PICK_TIMEOUT_MS);
-        }
+        adrCdAssertRequestChat(requestChatKey);
+        return adrCdChoiceBody(sys, parts);
+    }
 
-        var headers = { "Content-Type": "application/json" };
-        if (st.cdApiKey) headers.Authorization = "Bearer " + st.cdApiKey;
-        var optsC = {
-            method: "POST",
-            headers: headers,
-            body: JSON.stringify({
-                model: st.cdModel || "deepseek-chat",
-                messages: [
-                    { role: "system", content: sys },
-                    { role: "user", content: parts.join("\n\n") }
-                ],
-                temperature: 0.4,
-                max_tokens: ADR_CD_REPLY_TOKENS,
-                stream: false
-            })
-        };
-        if (aborterC) optsC.signal = aborterC.signal;
-
-        var rawC;
-        try {
-            var resC = await fetch(url, optsC);
-            rawC = await resC.text();
-            if (!resC.ok) throw new Error("择卡 API " + resC.status + "：" + String(rawC || "").slice(0, 160));
-        } catch (eF) {
-            if (didTimeoutC && eF && eF.name === "AbortError") throw new Error("择卡超时（" + (ADR_CD_PICK_TIMEOUT_MS / 1000) + "s）");
-            throw eF;
-        } finally {
-            if (timeoutC) clearTimeout(timeoutC);
-        }
-
-        var dataC;
-        try { dataC = JSON.parse(rawC); } catch (eJ) { throw new Error("择卡返回非 JSON"); }
-        var outC = String(parseResponse(dataC) || "").trim();
-        var mNum = outC.match(/-?\d+/);
-        if (!mNum) throw new Error("选卡答复无效：" + adrCdTruncate(outC, 40) + adrCdEmptyReplyHint(dataC, outC));
-        var n = Number(mNum[0]);
-        if (!(n >= 1 && n <= cands.length)) throw new Error("选卡编号越界：" + outC);
+    async function adrCdPickCardViaDS(cands, state) {
+        var chatKey = adrDChatKey();
+        var body = await adrCdBuildCardBody(cands, state);
+        var out = await adrCdRequestApi(body, "择卡", { chatKey: chatKey, onProgress: function (info) { adrCdSelectionProgress("择卡", info); } });
+        // 只认完整的候选编号，不从解释文字或思考过程中误捞数字。
+        if (!/^\d+$/.test(out)) throw new Error("选卡答复无效：" + adrCdTruncate(out, 80));
+        var n = Number(out);
+        if (!(n >= 1 && n <= cands.length)) throw new Error("选卡编号越界：" + out);
         return n;
     }
 
@@ -4186,17 +4439,20 @@
     async function adrCdPerformDraw(opts) {
         opts = opts || {};
         var st = settings();
+        var drawChatKey = adrDChatKey();
+        var mode = ADR_CD_MODES.indexOf(opts.mode) >= 0 ? opts.mode : st.cdMode;
         var state = adrCdChatState();
         var slotPools = adrCdBuildSlotPools(adrCdEnabledSlotTexts(state));
         if (!slotPools.length) return { ok: false, reason: "没有启用的仓库，或启用的仓库里没有卡" };
 
         var result = null;
         var usedMode = "盲抽";
+        var warning = "";
         var degraded = false;   // 择池失败降级过来的？降级时 NSFW 一律不参与
 
         // v1.23.0 择卡：候选按仓库均摊摸出来，连卡面一起给 DS 挑一张，或弃权。
         // 治的是"池选对了，池内那张不贴合"——择池只解决了前半段。
-        if (st.cdMode === "pickcard" && !opts.preview) {
+        if (mode === "pickcard" && !opts.preview) {
             var tC = Date.now();
             try {
                 var cands = adrCdBuildCandidates(slotPools, state, adrCdCandidateCount(slotPools));
@@ -4208,13 +4464,15 @@
                 result = { slot: chosen.slot, pool: chosen.pool, card: chosen.card };
                 usedMode = "择卡";
             } catch (eC) {
+                if (eC && eC.adrCdCanceled) throw eC;
+                warning = String(eC && eC.message || eC);
                 console.warn("[抽卡小能手] 择卡降级盲抽：" + (eC && eC.message ? eC.message : eC));
                 usedMode = "择卡降级盲抽";
                 degraded = true;
             }
         }
 
-        if (st.cdMode === "pick" && !opts.preview) {
+        if (mode === "pick" && !opts.preview) {
             var t0 = Date.now();
             try {
                 var pick = await adrCdPickPoolViaDS(slotPools, state);
@@ -4238,27 +4496,39 @@
                     if (cardP) { result = { slot: poolObj.slot, pool: pick, card: cardP }; usedMode = "择池"; }
                 }
             } catch (ePick) {
+                if (ePick && ePick.adrCdCanceled) throw ePick;
+                warning = String(ePick && ePick.message || ePick);
                 console.warn("[抽卡小能手] 择池降级盲抽：" + (ePick && ePick.message ? ePick.message : ePick));
                 usedMode = "择池降级盲抽";
                 degraded = true;
             }
         }
 
+        adrCdAssertRequestChat(drawChatKey);
         if (!result) result = adrCdDrawBlind(slotPools, state, "", adrCdNsfwGate(degraded));
         if (!result || !result.card) {
             // 空手而归时说清是哪道闸拦的，别让人对着"无可抽卡面"猜。
             var onlyNsfw = slotPools.length > 0 && slotPools.every(function (p) { return p.slot === "nsfw"; });
             if (onlyNsfw && degraded) {
-                return { ok: false, reason: "择池没成功，而此刻只有 NSFW 库可抽——没人判准入条件时不投，这一轮空过" };
+                return { ok: false, reason: (mode === "pickcard" ? "择卡" : "择池") + "没成功，而此刻只有 NSFW 库可抽——没人判准入条件时不投，这一轮空过" + (warning ? "\nAPI 原因：" + warning : "") };
             }
-            return { ok: false, reason: "无可抽卡面" };
+            return { ok: false, reason: "无可抽卡面" + (warning ? "\nAPI 原因：" + warning : "") };
         }
 
         if (opts.preview) {
             return { ok: true, pool: result.pool, card: result.card, mode: "试抽（盲抽）", preview: true };
         }
 
-        var floor = Number.isFinite(Number(opts.count)) ? Number(opts.count) : adrDAssistantRoundCount();
+        adrCdAssertRequestChat(drawChatKey);
+        var latest = adrCdChatState();
+        if (!adrCdActive() || latest.paused || (opts.auto && settings().cdAutoDraw === false)) {
+            return { ok: false, reason: "投卡已关闭或暂停，本次结果未注入" };
+        }
+        if (!latest.slotOn[result.slot]) return { ok: false, reason: "选中的仓库已关闭，本次结果未注入" };
+        // 请求可能持续多楼；只合并本次抽卡结果，不把途中改过的仓库/暂停设置覆盖回去。
+        latest.streak = state.streak;
+        state = latest;
+        var floor = Math.max(Number.isFinite(Number(opts.count)) ? Number(opts.count) : 0, adrDAssistantRoundCount());
         state.recent = (state.recent || []).concat([result.card]).slice(-ADR_CD_RECENT_MAX);
         state.history = (state.history || []).concat([{
             pool: result.pool,
@@ -4270,6 +4540,7 @@
             status: "live" // live 挂载中 / done 已兑现 / faded 已退为背景
         }]).slice(-ADR_CD_HISTORY_MAX);
         state.lastDrawAt = floor;
+        state.lastAutoAttemptAt = floor;
         state.floatCard = result.card;
         state.floatStage = "active";
         state.floatText = adrCdBuildEnvelope(adrCdEnvelopePair().active, result.card);
@@ -4277,57 +4548,65 @@
         adrCdApplyFloat(state.floatText);
         console.log("[抽卡小能手] 投卡", { 模式: usedMode, 卡池: result.pool, 卡面: result.card, 触发楼层: floor });
         adrCdUpdateStatusLine();
-        return { ok: true, pool: result.pool, card: result.card, mode: usedMode };
+        return { ok: true, pool: result.pool, card: result.card, mode: usedMode, warning: warning };
     }
 
     // ---- 自动触发 ----
 
     var adrCdFirstPassiveDone = {};
 
+    function adrCdAutoBase(state) {
+        return Math.max(Number.isFinite(Number(state.lastDrawAt)) ? Number(state.lastDrawAt) : -1,
+            Number.isFinite(Number(state.lastAutoAttemptAt)) ? Number(state.lastAutoAttemptAt) : -1);
+    }
+
     async function adrCdAutoCheck(count, reason, inStartupGrace) {
-        if (!adrCdActive() || adrCdDrawRunning) return;
+        if (!adrCdActive() || adrCdDrawRunning || adrCdLifecycleRunning) return;
         var state = adrCdChatState();
         if (state.paused) { adrCdUpdateStatusLine(); return; }
-        var n = adrCdN();
-        var base = Number(state.lastDrawAt);
-
-        if (!Number.isFinite(base) || base < 0) {
-            state.lastDrawAt = count;
-            adrCdSaveChatState(state);
-            console.log("[抽卡小能手] 首次对齐基准线：" + count);
+        // 手动档仍推进卡片本地生命周期，但绝不暗中调用兑现 API。
+        if (settings().cdAutoDraw === false) {
+            await adrCdAdvanceLifecycle(count, state, false);
             adrCdUpdateStatusLine();
             return;
         }
-
+        var n = adrCdN(), base = adrCdAutoBase(state);
+        if (base < 0) {
+            state.lastAutoAttemptAt = count;
+            adrCdSaveChatState(state);
+            adrCdUpdateStatusLine();
+            return;
+        }
         if (count - base < n) {
-            // 还没到投卡点，但可能到了这张卡的半衰期
             await adrCdAdvanceLifecycle(count, state);
             adrCdUpdateStatusLine();
             return;
         }
-
-        var gapDirty = (count - base - n) >= 20;
-        var fpKey = adrDChatKey() + "::cd";
+        var gapDirty = (count - base - n) >= 20, fpKey = adrDChatKey() + "::cd";
         if (adrDIsPassiveAutoCheck(reason) && gapDirty && (inStartupGrace || !adrCdFirstPassiveDone[fpKey])) {
             adrCdFirstPassiveDone[fpKey] = true;
-            state.lastDrawAt = count;
+            state.lastAutoAttemptAt = count;
             adrCdSaveChatState(state);
-            console.warn("[抽卡小能手] 发现脏基准线，只对齐不投卡", { count: count, base: base, n: n, reason: reason || "" });
             adrCdUpdateStatusLine();
             return;
         }
-
+        // 一拍只尝试一次；空库/失败也记住尝试楼层，防止轮询反复扣费。
+        state.lastAutoAttemptAt = count;
+        adrCdSaveChatState(state);
         adrCdDrawRunning = true;
+        adrCdSetDrawBusy(true);
         try {
+            adrCdSetTextAll("adr044-cd-draw-output", "自动投卡中…", "#8ed99d");
             var r = await adrCdPerformDraw({ auto: true, count: count });
-            if (!r || !r.ok) {
-                console.warn("[抽卡小能手] 本拍未投出（" + ((r && r.reason) || "未知") + "）；基准线保留，稍后重试");
-                adrCdUpdateStatusLine();
-            }
+            adrCdShowDrawResult(r, "自动");
         } catch (eDraw) {
-            console.warn("[抽卡小能手] 投卡失败", eDraw);
+            adrCdSetTextAll("adr044-cd-draw-output", "自动投卡未完成：" + String(eDraw && eDraw.message || eDraw), "#d4726a");
+            console.warn("[抽卡小能手] 投卡未完成", eDraw);
+        } finally {
+            adrCdDrawRunning = false;
+            adrCdSetDrawBusy(false);
+            adrCdUpdateStatusLine();
         }
-        adrCdDrawRunning = false;
     }
 
     // ---- v1.12 卡的生命周期 ----
@@ -4349,49 +4628,26 @@
 
     // 问 DS 一句「兑现没」。答复只认"是"/"否"，多一个字作废；任何异常按未兑现处理。
     async function adrCdAskFulfilled(card) {
-        var st = settings();
-        if (!st.cdApiEndpoint) throw new Error("未填写 API 地址");
-        var url = chatUrl(st.cdApiEndpoint);
-        if (!url) throw new Error("API 地址无效");
+        try { syncShared(); } catch (eSync) {}
+        var requestChatKey = adrDChatKey();
         var sys = "你是剧情兑现检查员。你会看到一件已经投放给作者的\"待发生事件\"，以及最近的正文。"
             + "判断这件事是否已经在正文里发生或被写出来了。只回答\"是\"或\"否\"，不加标点、不加解释。多一个字视为无效。";
         var recent = "";
         var askRounds = adrCdAskReadRounds();
         try { recent = await recentContentBlocks(askRounds); } catch (eR) {}
+        var animaHistory = { text: "" };
+        try { animaHistory = await adrDReadAnimaHistoryIfEnabled(); } catch (eAnima) {}
         var body = "【待发生事件】\n" + String(card || "")
             + "\n\n【最近正文】\n" + adrCdTruncate(recent, adrCdReadCharCap(askRounds))
+            + (animaHistory.text && adrDAnimaHistoryEnabledNow() ? "\n\n【Anima 历史总结 · 仅辅助判断，不替代最近正文】\n" + animaHistory.text : "")
             + "\n\n这件事已经发生了吗？只回答 是 或 否。";
 
-        var ab = typeof AbortController !== "undefined" ? new AbortController() : null;
-        var tid = null, timedOut = false;
-        if (ab) tid = setTimeout(function () { timedOut = true; try { ab.abort(); } catch (e) {} }, ADR_CD_PICK_TIMEOUT_MS);
-        var headers = { "Content-Type": "application/json" };
-        if (st.cdApiKey) headers.Authorization = "Bearer " + st.cdApiKey;
-        var opts = {
-            method: "POST", headers: headers,
-            body: JSON.stringify({
-                model: st.cdModel || "deepseek-chat",
-                messages: [{ role: "system", content: sys }, { role: "user", content: body }],
-                temperature: 0, max_tokens: ADR_CD_REPLY_TOKENS, stream: false
-            })
-        };
-        if (ab) opts.signal = ab.signal;
-        var raw;
-        try {
-            var res = await fetch(url, opts);
-            raw = await res.text();
-            if (!res.ok) throw new Error("兑现检查 API " + res.status);
-        } catch (eF) {
-            if (timedOut) throw new Error("兑现检查超时");
-            throw eF;
-        } finally { if (tid) clearTimeout(tid); }
-        var data;
-        try { data = JSON.parse(raw); } catch (eJ) { throw new Error("兑现检查返回非 JSON"); }
-        var out = adrCdSanitizePickResponse(parseResponse(data), ["是", "否"]);
-        if (!out) throw new Error("兑现检查答复无效");
+        adrCdAssertRequestChat(requestChatKey);
+        var out = await adrCdRequestApi(adrCdChoiceBody(sys, [body], 0), "兑现检查", { chatKey: requestChatKey });
+        out = out.replace(/[。.!！\s]/g, "").trim();
+        if (out !== "是" && out !== "否") throw new Error("兑现检查答复无效：" + adrCdTruncate(out, 40));
         return out === "是";
     }
-
 
     // 结案：从耳边撤下，但不推进基准线——下一张仍按原节奏来，中间那几楼留白让剧情喘口气
     function adrCdCloseCard(reason, silent) {
@@ -4419,9 +4675,10 @@
     //   常驻   —— 什么都不做，卡挂到下一张来换
     //   半衰期 —— 挂过 N/2 楼后先问一次是否兑现（若开启），未兑现则降级为背景
     //   只说一次 —— 只挂一层，说完就撤，耳边留白到下一张
-    async function adrCdAdvanceLifecycle(count, state) {
+    async function adrCdAdvanceLifecycle(count, state, allowApi) {
         try {
             var st = settings();
+            var lifecycleChatKey = adrDChatKey();
             var lifeMode = adrCdLifeMode();
             if (lifeMode === "stay") return;
             if (!state.floatCard || state.floatStage !== "active") return;
@@ -4451,7 +4708,7 @@
 
             if (age < adrCdHalfLifeFloors()) return;
 
-            // v1.23.2：问询期间（最长 8s）可能又到了投卡点、新卡已经挂上。
+            // 问询期间可能又到了投卡点、切换聊天或改了开关；应用结果前再次核对。
             // 记下此刻是哪张卡、哪一楼投的，回来先对账；对不上就说明处理的已经不是这张卡，整段放弃。
             // 同时上一面旗，两次检查并发进来时不重复问询、不重复扣费。
             if (adrCdLifecycleRunning) return;
@@ -4461,13 +4718,15 @@
             try {
                 var lastRec = (state.history || []).slice(-1)[0] || null;
                 var isNsfwCard = !!(lastRec && lastRec.slot === "nsfw");
-                if (st.cdAutoDone && isNsfwCard) {
+                if (allowApi !== false && st.cdAutoDone && isNsfwCard) {
                     // v1.23.2：NSFW 卡面不出门——择卡那一路早已如此，兑现判定此前却把卡面全文发了出去。
                     // 小眼睛那边的审核会打回，等于白烧一次调用；这一档直接按未兑现降级。
                     console.log("[抽卡小能手] NSFW 卡不问小眼睛，直接降级为背景");
-                } else if (st.cdAutoDone) {
+                } else if (allowApi !== false && st.cdAutoDone) {
                     try {
                         var done = await adrCdAskFulfilled(state.floatCard);
+                        adrCdAssertRequestChat(lifecycleChatKey);
+                        if (!adrCdActive() || adrCdChatState().paused) return;
                         var check = adrCdChatState();
                         if (check.floatCard !== cardAtStart || Number(check.lastDrawAt) !== drawAtStart) {
                             console.warn("[抽卡小能手] 问询期间卡已换过，本次判定作废");
@@ -4485,7 +4744,10 @@
                     }
                 }
 
+                adrCdAssertRequestChat(lifecycleChatKey);
+                if (!adrCdActive()) return;
                 var fresh = adrCdChatState();
+                if (fresh.paused) return;
                 if (!fresh.floatCard || fresh.floatStage !== "active") return;
                 if (fresh.floatCard !== cardAtStart || Number(fresh.lastDrawAt) !== drawAtStart) return;
                 fresh.floatStage = "faded";
@@ -4556,6 +4818,7 @@
     }
 
     function adrCdSetValueSafe(id, value) {
+        if (adrDLiveOutputs[id]) { adrDSetAllById(id, adrDLiveOutputs[id].text); return; }
         try {
             Array.prototype.slice.call(rootDoc().querySelectorAll("#" + id)).forEach(function (el) {
                 if (!el || adrCdIsBusyEl(el)) return; // 正在打字的框，谁也别碰
@@ -4621,10 +4884,10 @@
         var mode = ADR_CD_MODE_LABEL[st.cdMode] || "盲抽";
         var n = adrCdN();
         var count = adrDAssistantRoundCount();
-        var base = Number(state.lastDrawAt);
+        var base = adrCdAutoBase(state);
         var left = (Number.isFinite(base) && base >= 0) ? Math.max(0, n - (count - base)) : n;
         var head = libPart + " · " + mode + " · " + ADR_CD_LIFE_MODE_LABEL[adrCdLifeMode()]
-            + (state.paused ? " · 已暂停投卡" : " · 距下张还有 " + left + " 楼");
+            + (state.paused ? " · 已暂停投卡" : st.cdAutoDraw === false ? " · 仅手动投卡" : " · 自动每 " + n + " 楼 · 距下次还有 " + left + " 楼");
         // v1.22.0：降级是静默发生的，用户对着一张莫名其妙的卡根本不知道 DS 那次没应答。
         var lastRec = ((state.history || []).slice(-1)[0]) || null;
         if (lastRec && String(lastRec.mode || "").indexOf("降级") >= 0) {
@@ -4676,20 +4939,22 @@
         } catch (e) {}
     }
 
-    function adrCdRefreshEditSelect(selectedName) {
+    function adrCdRefreshEditSelect(selectedName, force) {
         try {
             var names = adrCdLibNames();
+            var draft = adrCdCurrentDraft();
             if (selectedName === undefined) {
                 var cur = qForm("adr044-cd-edit-select");
-                selectedName = cur ? String(cur.value || "") : "";
+                selectedName = draft ? "" : (cur ? String(cur.value || "") : "");
             }
-            if (!selectedName || names.indexOf(selectedName) < 0) selectedName = names[0] || "";
+            if (!(draft && !selectedName) && (!selectedName || names.indexOf(selectedName) < 0)) selectedName = names[0] || "";
             var html = names.map(function (nm) {
                 return '<option value="' + esc(nm) + '"' + (nm === selectedName ? " selected" : "") + '>' + esc(nm) + '</option>';
             }).join("");
-            var sigEdit = adrCdOptSig("edit", names, selectedName);
+            if (draft) html = '<option value=""' + (!selectedName ? " selected" : "") + '>AI 生成草稿（待保存）</option>' + html;
+            var sigEdit = adrCdOptSig("edit", draft ? ["__draft__"].concat(names) : names, selectedName);
             Array.prototype.slice.call(rootDoc().querySelectorAll("#adr044-cd-edit-select")).forEach(function (el) {
-                if (adrCdIsBusyEl(el)) return;
+                if (!force && adrCdIsBusyEl(el)) return;
                 adrCdFillSelect(el, html, selectedName, sigEdit);
             });
             return selectedName;
@@ -4697,11 +4962,21 @@
     }
 
     // 编辑区回灌：只在换库 / 导入 / 换聊 / 首次建面板时调用，绝不挂在周期刷新上
-    function adrCdLoadEditor(name) {
+    function adrCdLoadEditor(name, force) {
+        if (adrDLiveOutputs["adr044-cd-lib-editor"]) { adrCdSetLibraryStreaming(true); return; }
         try {
-            var chosen = adrCdRefreshEditSelect(name);
-            adrCdSetValueSafe("adr044-cd-lib-name", chosen);
-            adrCdSetValueSafe("adr044-cd-lib-editor", adrCdLibraries()[chosen] || "");
+            var draft = adrCdCurrentDraft();
+            var writeValue = force ? adrDSetAllById : adrCdSetValueSafe;
+            if (draft && !name) {
+                adrCdRefreshEditSelect("", force);
+                writeValue("adr044-cd-lib-name", draft.name);
+                adrDSetAllById("adr044-cd-lib-editor", draft.text);
+                return;
+            }
+            if (name) adrCdGeneratedDraft = null;
+            var chosen = adrCdRefreshEditSelect(name, force);
+            writeValue("adr044-cd-lib-name", chosen);
+            writeValue("adr044-cd-lib-editor", adrCdLibraries()[chosen] || "");
         } catch (e) {}
     }
 
@@ -4719,6 +4994,9 @@
         try {
             var st = settings();
             adrCdSetCheckedSafe("adr044-cd-enabled", !!st.cdEnabled);
+            adrCdSetCheckedSafe("adr044-cd-auto-draw", st.cdAutoDraw !== false);
+            adrCdSetCheckedSafe("adr044-cd-stream", st.cdStreamEnabled === true);
+            adrCdSetValueSafe("adr044-cd-reply-tokens", String(adrCdReplyTokens()));
             adrCdSetValueSafe("adr044-cd-n", String(adrCdN()));
             adrCdSetTextAll("adr044-cd-n-val", String(adrCdN()));
             adrCdSetValueSafe("adr044-cd-mode", ADR_CD_MODES.indexOf(st.cdMode) >= 0 ? st.cdMode : "blind");
@@ -4736,6 +5014,7 @@
             adrCdSetValueSafe("adr044-cd-endpoint", st.cdApiEndpoint || "");
             adrCdSetValueSafe("adr044-cd-key", st.cdApiKey || "");
             adrCdSetValueSafe("adr044-cd-model", st.cdModel || "");
+            ["generate", "pool", "card"].forEach(function (kind) { adrCdRefreshAiPreset(kind, false); });
             try { adrDRefreshApiProfileSelects("cd"); } catch (eP) {}
             adrCdLoadEditor(undefined);
             adrCdSyncChatControls();
@@ -4914,6 +5193,74 @@
 
     // ---- 按钮动作 ----
 
+    function adrCdSetDrawBusy(busy) {
+        ["blind", "pool", "card"].forEach(function (mode) {
+            try { Array.prototype.slice.call(rootDoc().querySelectorAll("#adr044-cd-draw-" + mode)).forEach(function (el) { el.disabled = !!busy; }); } catch (e) {}
+        });
+    }
+
+    function adrCdShowDrawResult(result, trigger) {
+        if (!result || !result.ok) {
+            adrCdSetTextAll("adr044-cd-draw-output", (trigger || "") + "未投出：" + ((result && result.reason) || "未知原因") + "\n可检查设置后手动重试；自动调用不会在同一楼重复执行。", "#d4726a");
+            return;
+        }
+        adrCdSetTextAll("adr044-cd-draw-output", (trigger || "") + " · " + result.mode + "\n【" + result.pool + "】\n" + result.card
+            + (result.warning ? "\nAPI 未完成，已降级盲抽：" + result.warning : "")
+            + "\n已投放并计入投卡史；下次自动投卡从这张重新计时。", result.warning ? "#d6b177" : "#8ed99d");
+        adrCdRefreshLifePanel();
+        adrCdUpdateStatusLine();
+    }
+
+    async function adrCdManualDraw(mode) {
+        if (adrCdDrawRunning || adrCdLifecycleRunning) {
+            adrCdSetTextAll("adr044-cd-draw-output", "抽卡 / 兑现判断正在进行，请等本次完成；不会重复发起请求。", "#d6b177");
+            return;
+        }
+        if (ADR_CD_MODES.indexOf(mode) < 0) return;
+        adrCdDrawRunning = true;
+        adrCdSetDrawBusy(true);
+        try {
+            syncShared();
+            syncType("cd");
+            if (!adrCdActive()) throw new Error("请先开启中控总开关和「启用剧情小风铃」");
+            if (!adrDChatKeyReady()) throw new Error("请先打开一个聊天");
+            if (adrCdChatState().paused) throw new Error("当前聊天已暂停投卡，请先取消暂停");
+            adrCdSetTextAll("adr044-cd-draw-output", "手动" + ADR_CD_MODE_LABEL[mode] + "中…", "#8ed99d");
+            var result = await adrCdPerformDraw({ mode: mode, count: adrDAssistantRoundCount() });
+            adrCdShowDrawResult(result, "手动");
+        } catch (e) {
+            adrCdSetTextAll("adr044-cd-draw-output", "手动投卡未完成：" + String(e && e.message || e), "#d4726a");
+        } finally {
+            adrCdDrawRunning = false;
+            adrCdSetDrawBusy(false);
+        }
+    }
+
+    var adrCdSelectionPreviewRunning = false;
+    async function adrCdPreviewSelection(kind) {
+        if (adrCdSelectionPreviewRunning) return;
+        adrCdSelectionPreviewRunning = true;
+        try {
+            adrCdSetTextAll("adr044-cd-selection-preview-status", "正在整理发送内容…", "#8ed99d");
+            adrDSetAllById("adr044-cd-selection-preview", "");
+            syncType("cd");
+            var chatKey = adrDChatKey(), state = adrCdChatState();
+            var pools = adrCdBuildSlotPools(adrCdEnabledSlotTexts(state));
+            if (!pools.length) throw new Error("请先在三个仓库中启用至少一副有卡的卡库");
+            var body;
+            if (kind === "pool") body = await adrCdBuildPoolBody(pools, state);
+            else body = await adrCdBuildCardBody(adrCdBuildCandidates(pools, state, adrCdCandidateCount(pools)), state);
+            adrCdAssertRequestChat(chatKey);
+            var text = "【" + (kind === "pool" ? "择池" : "择卡") + "试运行 · 不调用 API、不投卡】\n"
+                + "模型：" + body.model + " · 流式：" + (body.stream ? "开启" : "关闭") + "\n\n"
+                + body.messages.map(function (m) { return "【" + m.role + "】\n" + m.content; }).join("\n\n");
+            adrDSetAllById("adr044-cd-selection-preview", text);
+            adrCdSetTextAll("adr044-cd-selection-preview-status", "完整发送内容已显示；择卡候选是本次预览抽样，真正投卡时会重新抽取。", "#8ed99d");
+        } catch (e) {
+            adrCdSetTextAll("adr044-cd-selection-preview-status", "试运行失败：" + String(e && e.message || e), "#d4726a");
+        } finally { adrCdSelectionPreviewRunning = false; }
+    }
+
     async function adrCdPreviewDraw() {
         try {
             adrCdSetTextAll("adr044-cd-preview-out", "抽取中…", "#8ed99d");
@@ -4931,6 +5278,7 @@
     function adrCdLibStatus(text, color) { adrCdSetTextAll("adr044-cd-lib-status", text, color || "#d6b177"); }
 
     function adrCdEditingName() {
+        if (adrCdCurrentDraft()) return "";
         var el = qForm("adr044-cd-edit-select");
         return el ? String(el.value || "") : "";
     }
@@ -4938,6 +5286,7 @@
     // v1.17.2：查一副库当前挂在哪个槽（没挂返回 ""）
 
     function adrCdSaveLibraryFromEditor() {
+        if (adrDLiveOutputs["adr044-cd-lib-editor"]) { adrCdLibStatus("正在生成，请等内容接收完成后再保存"); return; }
         try {
             var nameEl = qForm("adr044-cd-lib-name");
             var edEl = qForm("adr044-cd-lib-editor");
@@ -4947,6 +5296,7 @@
             var existed = libs[name] !== undefined;
             libs[name] = edEl ? String(edEl.value || "") : "";
             save("cdLibraries", libs);
+            adrCdGeneratedDraft = null;
 
             // v1.17.2：落点对保存同样生效。用户的自然直觉就是"选好落点→保存＝挂载"，
             // 工具应该迎合直觉而不是让人背规则。已挂在某槽的库保持原位，绝不搬家。
@@ -5250,6 +5600,17 @@
     }
 
     function adrCdHandleButtonId(id, btn) {
+        var aiMatch = String(id || "").match(/^adr044-cd-ai-(generate|pool|card)-(save|delete)$/);
+        if (aiMatch) {
+            if (aiMatch[2] === "save") adrCdSaveAiPresetAs(aiMatch[1]);
+            else adrCdDeleteAiPreset(aiMatch[1]);
+            return true;
+        }
+        if (id === "adr044-cd-draw-blind") { adrCdManualDraw("blind"); return true; }
+        if (id === "adr044-cd-draw-pool") { adrCdManualDraw("pick"); return true; }
+        if (id === "adr044-cd-draw-card") { adrCdManualDraw("pickcard"); return true; }
+        if (id === "adr044-cd-preview-pool") { adrCdPreviewSelection("pool"); return true; }
+        if (id === "adr044-cd-preview-card") { adrCdPreviewSelection("card"); return true; }
         if (id === "adr044-tab-cd") { switchTab("cd"); return true; }
         if (id === "adr044-cd-preview-draw") { adrCdPreviewDraw(); return true; }
         if (id === "adr044-cd-selfcheck") { adrCdSelfCheck(); return true; }
@@ -5262,6 +5623,8 @@
         if (id === "adr044-cd-lib-delete") { adrCdRequestDeleteLibrary(btn); return true; }
         if (id === "adr044-cd-export") { adrCdExportLibrary(); return true; }
         if (id === "adr044-cd-import") { adrCdTriggerImport(); return true; }
+        if (id === "adr044-cd-generate") { adrCdGenerateLibrary(); return true; }
+        if (id === "adr044-cd-gen-local") { adrCdPreviewLibraryGeneration(); return true; }
         if (id === "adr044-cd-load-models") { loadModels("cd"); return true; }
         if (id === "adr044-cd-test") { adrCdTestConnection(); return true; }
         if (id === "adr044-cd-save") { syncType("cd"); status("cd", "已保存当前使用的择池 API ✓", "#8ed99d"); return true; }
@@ -5279,30 +5642,247 @@
             if (!st.cdModel) { status("cd", "请先填写或加载一个模型", "#d4726a"); return; }
             status("cd", "正在测试连接…", "#8ed99d");
             var t0 = Date.now();
-            var headers = { "Content-Type": "application/json" };
-            if (st.cdApiKey) headers.Authorization = "Bearer " + st.cdApiKey;
-            var res = await fetch(url, {
-                method: "POST",
-                headers: headers,
-                body: JSON.stringify({
-                    model: st.cdModel,
-                    messages: [{ role: "user", content: "回复两个字：在的" }],
-                    max_tokens: ADR_CD_REPLY_TOKENS,
-                    stream: false
-                })
-            });
-            var raw = await res.text();
-            if (!res.ok) { status("cd", "连接失败 " + res.status + "：" + String(raw || "").slice(0, 120), "#d4726a"); return; }
-            var data;
-            try { data = JSON.parse(raw); } catch (eJ) { status("cd", "返回非 JSON，接口可能不兼容", "#d4726a"); return; }
-            var out = "";
-            try { out = parseResponse(data); } catch (eP) {}
+            var out = await adrCdRequestApi(adrCdChoiceBody("你是连接测试助手。", ["回复两个字：在的"], 0), "连接测试");
             status("cd", "连接正常 ✓ 耗时 " + (Date.now() - t0) + "ms　模型回话：" + adrCdTruncate(out, 20), "#8ed99d");
         } catch (e) {
             status("cd", "连接失败：" + (e && e.message ? e.message : e), "#d4726a");
         }
     }
 
+    // ---- AI 生成卡库：复用择池／择卡 API，结果先回填编辑器，确认后再保存 ----
+
+    function adrCdNormalizeGeneratedLibrary(raw) {
+        var text = String(raw || "").replace(/\r\n?/g, "\n").trim();
+        // 模型偶尔会自作主张加 Markdown 代码围栏或开场白；只取真正的卡库正文。
+        text = text.replace(/^```(?:text|markdown|md)?\s*/i, "").replace(/\s*```$/i, "").trim();
+        var firstPool = text.search(/^##\s*.+$/m);
+        if (firstPool > 0) text = text.slice(firstPool).trim();
+        var pools = adrCdParseLibraryText(text);
+        if (!pools.length) throw new Error("模型没有返回有效卡库（需要至少一个「## 卡池名」和一张卡）");
+        var cards = 0;
+        pools.forEach(function (p) { cards += p.cards.length; });
+        if (!cards) throw new Error("模型没有返回有效卡面");
+        // 重建为插件唯一接受的格式，同时丢掉解释、代码围栏和无关 Markdown。
+        return pools.map(function (p) {
+            return "## " + p.name + "\n" + p.cards.join("\n");
+        }).join("\n\n");
+    }
+
+    function adrCdNextGeneratedLibraryName() {
+        var libs = adrCdLibraries();
+        var base = "AI生成卡库";
+        var name = base;
+        var i = 2;
+        while (libs[name] !== undefined) { name = base + " " + i; i++; }
+        return name;
+    }
+
+    function adrCdSetGenerationStatus(text, color) {
+        adrCdSetTextAll("adr044-cd-gen-status", text, color || "#d6b177");
+    }
+
+    function adrCdSetGenerationBusy(busy) {
+        try {
+            Array.prototype.slice.call(rootDoc().querySelectorAll("#adr044-cd-generate, #adr044-cd-gen-local")).forEach(function (el) {
+                var preview = el.id === "adr044-cd-gen-local";
+                el.disabled = !!busy;
+                el.textContent = busy
+                    ? (preview ? "试运行准备中…" : "🧠 生成中…")
+                    : (preview ? "试运行（不花钱）" : "🧠 思考生成卡库");
+            });
+        } catch (e) {}
+    }
+
+    function adrCdSetLibraryStreaming(busy) {
+        try {
+            var ids = ["edit-select", "lib-name", "lib-save", "lib-rename", "lib-delete", "import", "import-file", "export"];
+            ids.forEach(function (suffix) {
+                Array.prototype.slice.call(rootDoc().querySelectorAll("#adr044-cd-" + suffix)).forEach(function (el) { el.disabled = !!busy; });
+            });
+        } catch (e) {}
+        if (busy) adrDSetAllById("adr044-cd-lib-editor", ""); // 由实时通道保留当前正文并补齐新建面板的只读状态。
+    }
+
+    async function adrCdBuildLibraryGenerationBody() {
+        // 卡库生成和择池／择卡共用中控开关；这里也同步一次，确保刚关闭的开关立即生效。
+        try { syncShared(); } catch (eSyncShared) {}
+        syncType("cd");
+        var st = settings();
+        var generationChatKey = adrDChatKey();
+        var promptEl = qForm("adr044-cd-gen-prompt");
+        var request = promptEl ? String(promptEl.value || "").trim() : "";
+        if (!request) request = "围绕当前故事，补一组能自然嵌入剧情、彼此不重复的悬置事件";
+
+        var presetEl = qForm("adr044-cd-preset");
+        var preset = presetEl ? String(presetEl.value || "").trim() : "";
+        if (!preset) preset = String(st.cdPreset || ADR_CD_DEFAULT_PRESET).trim() || ADR_CD_DEFAULT_PRESET;
+        adrCdStoreAiPresetText("generate", preset);
+        adrCdSaveSoon();
+
+        var poolsEl = qForm("adr044-cd-gen-pools");
+        var cardsEl = qForm("adr044-cd-gen-cards");
+        var poolCount = Math.round(Number(poolsEl && poolsEl.value));
+        var cardsPerPool = Math.round(Number(cardsEl && cardsEl.value));
+        if (!Number.isFinite(poolCount)) poolCount = 3;
+        if (!Number.isFinite(cardsPerPool)) cardsPerPool = 5;
+        poolCount = Math.min(6, Math.max(1, poolCount));
+        cardsPerPool = Math.min(10, Math.max(2, cardsPerPool));
+
+        var targetSlot = adrCdImportSlot();
+        var targetLabel = targetSlot ? ADR_CD_SLOT_FULL[targetSlot] : "未指定仓库";
+        var recent = "";
+        try { recent = await recentContentBlocks(Math.min(12, Math.max(6, adrCdPickReadRounds()))); } catch (eRecent) {}
+        if (generationChatKey !== adrDChatKey()) throw new Error("聊天已切换，已取消本次卡库生成");
+        var precise = "";
+        try { precise = await buildPreciseContext(); } catch (ePrecise) {}
+        if (generationChatKey !== adrDChatKey()) throw new Error("聊天已切换，已取消本次卡库生成");
+        var animaHistory = { text: "" };
+        try { animaHistory = await adrDReadAnimaHistoryIfEnabled(); } catch (eAnima) {}
+        if (generationChatKey !== adrDChatKey()) throw new Error("聊天已切换，已取消本次卡库生成");
+
+        var model = String(st.cdModel || "").trim() || "deepseek-chat";
+        var sys = "你正在按照下面的【抽卡预设】设计卡库。\n【抽卡预设】\n" + preset
+            + "\n\n【系统硬性输出协议】请先在内部充分思考，再只输出可直接导入的纯文本卡库，不要输出思考过程、解释、前言或 Markdown 代码围栏。"
+            + "每张卡必须是一件‘发生了一半的事’：具体（有人、物、时刻或变化），悬置（不解释谁为何，也不替作者写完），可嫁接（尽量不依赖专名）。"
+            + "卡面写事实与意象，不写‘请让角色’‘现在发生’等指令，不写总结，不要重复。"
+            + "严格使用以下格式：每个卡池先写一行「## 卡池名」，下面每行一张卡；卡池之间空一行。"
+            + "不要输出除卡池标题和卡面以外的任何内容。";
+        var parts = [];
+        parts.push("【生成要求】\n" + request);
+        parts.push("【数量】\n生成 " + poolCount + " 个卡池，每个卡池约 " + cardsPerPool + " 张卡，共约 " + (poolCount * cardsPerPool) + " 张。");
+        parts.push("【目标仓库】\n" + targetLabel + "。" + (targetSlot === "story"
+            ? "这是专属剧情库，优先围绕当前角色、关系和未完线索生成。"
+            : targetSlot === "common"
+                ? "这是通用库，卡面应尽量跨场景、跨角色可嫁接。"
+                : targetSlot === "nsfw"
+                    ? "这是 NSFW 库，只生成明确成人向、服务商允许的内容，并保持事件悬置，不替正文写完。"
+                    : "用户尚未指定仓库，请让内容本身保持可嫁接。"));
+        if (recent) parts.push("【当前聊天最近正文】\n" + adrCdTruncate(recent, 6000));
+        if (precise) parts.push("【角色卡、世界书与人设】\n" + adrCdTruncate(precise, 5000));
+        if (animaHistory.text && adrDAnimaHistoryEnabledNow()) parts.push("【Anima 历史总结 · 仅作为卡库生成的历史背景】\n" + animaHistory.text);
+        parts.push("现在只输出卡库正文。" );
+
+        return {
+            model: model,
+            messages: [
+                { role: "system", content: sys },
+                { role: "user", content: parts.join("\n\n") }
+            ],
+            temperature: 0.8,
+            max_tokens: ADR_CD_LIB_GEN_REPLY_TOKENS,
+            stream: st.cdStreamEnabled === true
+        };
+    }
+
+    async function adrCdPreviewLibraryGeneration() {
+        if (adrCdLibraryGenerationRunning || adrCdLibraryGenerationPreviewRunning) return false;
+        adrCdLibraryGenerationPreviewRunning = true;
+        adrCdSetGenerationBusy(true);
+        adrCdSetGenerationStatus("正在准备试运行内容…", "#d6b177");
+        adrDSetAllById("adr044-cd-gen-preview", "");
+        try {
+            var chatKey = adrDChatKey();
+            var body = await adrCdBuildLibraryGenerationBody();
+            var statistics = await adrDPreviewStats(body);
+            adrCdAssertRequestChat(chatKey);
+            var sections = ["【抽卡卡库生成试运行｜完整发送内容，未发送】"];
+            body.messages.forEach(function (message) {
+                var heading = message.role === "system" ? "系统预设" : "发送上下文";
+                sections.push("【" + heading + " · " + message.role + "】\n" + message.content);
+            });
+            adrDSetAllById("adr044-cd-gen-preview", sections.join("\n\n"));
+            adrCdSetGenerationStatus("试运行完成 ✓｜" + statistics + "（未调用择池／择卡 API，未保存卡库）", "#8ed99d");
+            return true;
+        } catch (error) {
+            var previewError = "试运行失败：" + (error && error.message ? error.message : String(error));
+            adrDSetAllById("adr044-cd-gen-preview", previewError);
+            adrCdSetGenerationStatus(previewError, "#d4726a");
+            return false;
+        } finally {
+            adrCdLibraryGenerationPreviewRunning = false;
+            adrCdSetGenerationBusy(false);
+        }
+    }
+    async function adrCdGenerateLibrary() {
+        if (adrCdLibraryGenerationRunning || adrCdLibraryGenerationPreviewRunning) return;
+        adrCdLibraryGenerationRunning = true;
+        adrCdSetGenerationBusy(true);
+        var previewOutput = null, editorOutput = null;
+        try {
+            // 先把当前面板里的 API 输入框写回设置，避免用户改完就点生成时读到旧值。
+            syncType("cd");
+            var st = settings();
+            var endpoint = String(st.cdApiEndpoint || "").trim();
+            if (!endpoint) throw new Error("请先在「择池／择卡 API」里填写 API 地址");
+            var url = chatUrl(endpoint);
+            if (!url) throw new Error("择池／择卡 API 地址无效");
+
+            var generationChatKey = adrDChatKey();
+            var body = await adrCdBuildLibraryGenerationBody();
+            var targetSlot = adrCdImportSlot();
+            var targetLabel = targetSlot ? ADR_CD_SLOT_FULL[targetSlot] : "未指定仓库";
+
+            // 在替换编辑区前完成已有手动编辑，避免延迟自动保存把流式片段写进旧库。
+            if (adrCdEditorDebounce) {
+                clearTimeout(adrCdEditorDebounce); adrCdEditorDebounce = null;
+                var editingName = adrCdEditingName(), previousEditor = qForm("adr044-cd-lib-editor");
+                if (editingName && previousEditor) {
+                    var existingLibraries = adrCdLibraries();
+                    existingLibraries[editingName] = String(previousEditor.value || "");
+                    save("cdLibraries", existingLibraries);
+                }
+            }
+            previewOutput = adrDBeginLiveOutput("adr044-cd-gen-preview", "");
+            var name = adrCdNextGeneratedLibraryName();
+            adrCdSetGenerationStatus(body.stream ? "生成中…等待流式内容" : "生成中…等待完整答复", "#8ed99d");
+            var responseText = await adrCdRequestApi(body, "生成卡库", {
+                chatKey: generationChatKey, idleMs: ADR_CD_LIB_GEN_IDLE_MS, hardMs: 600000,
+                onProgress: function (info) {
+                    if (info.text) {
+                        adrDWriteLiveOutput(previewOutput, info.text);
+                        if (!editorOutput) {
+                            adrCdGeneratedDraft = { name: name, text: "", chatKey: generationChatKey };
+                            adrCdRefreshEditSelect("", true);
+                            adrDSetAllById("adr044-cd-lib-name", name);
+                            editorOutput = adrDBeginLiveOutput("adr044-cd-lib-editor", "");
+                            adrCdSetLibraryStreaming(true);
+                            adrxRevealModuleFor("adr044-cd-lib-editor");
+                        }
+                        adrCdGeneratedDraft.text = info.text;
+                        adrDWriteLiveOutput(editorOutput, info.text);
+                        adrCdSetGenerationStatus("生成中…（已收到 " + info.text.length + " 字）", "#8ed99d");
+                    } else if (info.reasoningChars) {
+                        adrCdSetGenerationStatus("生成中…（模型思考中，已收到 " + info.reasoningChars + " 字思考增量）", "#8ed99d");
+                    }
+                }
+            });
+            adrCdAssertRequestChat(generationChatKey);
+            var generated = adrCdNormalizeGeneratedLibrary(responseText);
+            // 结果只回填编辑器，不自动覆盖/保存；用户确认后点「保存」，落点选择照常生效。
+            if (adrCdEditorDebounce) { clearTimeout(adrCdEditorDebounce); adrCdEditorDebounce = null; }
+            adrDSetAllById("adr044-cd-lib-name", name);
+            adrCdGeneratedDraft.text = generated;
+            adrDWriteLiveOutput(editorOutput, generated);
+            var generatedPools = adrCdParseLibraryText(generated);
+            var generatedCards = 0;
+            generatedPools.forEach(function (p) { generatedCards += p.cards.length; });
+            adrCdSetGenerationStatus("已生成「" + name + "」：" + generatedPools.length + " 池 / " + generatedCards + " 张。请检查内容，确认后点击「保存」" + (targetSlot ? "（将挂进" + targetLabel + "）" : "") + " ✓", "#8ed99d");
+            adrCdLibStatus("AI 卡库已回填编辑器，尚未保存。", "#8ed99d");
+        } catch (e) {
+            adrCdSetGenerationStatus("生成失败：" + (e && e.message ? e.message : e), "#d4726a");
+        } finally {
+            adrDEndLiveOutput(previewOutput);
+            adrDEndLiveOutput(editorOutput);
+            adrCdSetLibraryStreaming(false);
+            if (editorOutput && !adrCdCurrentDraft()) {
+                adrDSetAllById("adr044-cd-gen-preview", "聊天已切换，本次生成已取消");
+                // 旧聊天的流式草稿必须清掉，不能被编辑器的焦点保护留在新聊天里。
+                adrCdLoadEditor(undefined, true);
+            }
+            adrCdLibraryGenerationRunning = false;
+            adrCdSetGenerationBusy(false);
+        }
+    }
     // ---- 控件绑定（幂等）----
 
     var adrCdEditorDebounce = null;
@@ -5358,6 +5938,39 @@
                     if (el.checked) adrCdRestoreFloat("toggle-cd-on");
                     else adrCdApplyFloat("");
                     adrCdUpdateStatusLine();
+                });
+            });
+
+            each("adr044-cd-auto-draw", function (el) {
+                tapLock(el);
+                el.addEventListener("change", function () {
+                    var enabled = !!el.checked;
+                    save("cdAutoDraw", enabled);
+                    adrDSetAllById("adr044-cd-auto-draw", "", enabled);
+                    if (enabled && adrDChatKeyReady()) {
+                        var state = adrCdChatState();
+                        state.lastAutoAttemptAt = adrDAssistantRoundCount();
+                        adrCdSaveChatState(state);
+                    }
+                    saveNow();
+                    adrCdUpdateStatusLine();
+                });
+            });
+            each("adr044-cd-stream", function (el) {
+                tapLock(el);
+                el.addEventListener("change", function () {
+                    save("cdStreamEnabled", !!el.checked);
+                    adrDSetAllById("adr044-cd-stream", "", !!el.checked);
+                    saveNow();
+                });
+            });
+            each("adr044-cd-reply-tokens", function (el) {
+                guard(el);
+                el.addEventListener("change", function () {
+                    save("cdReplyTokens", Math.round(Number(el.value)) || ADR_CD_REPLY_TOKENS);
+                    save("cdReplyTokens", adrCdReplyTokens());
+                    adrDSetAllById("adr044-cd-reply-tokens", String(adrCdReplyTokens()));
+                    saveNow();
                 });
             });
 
@@ -5495,6 +6108,24 @@
                 guard(el);
                 el.addEventListener("change", function () { save("cdModel", String(el.value || "").trim()); saveNow(); });
             });
+            ["generate", "pool", "card"].forEach(function (kind) {
+                var cfg = adrCdAiPresetConfig(kind), id = "adr044-cd-ai-" + kind;
+                each(cfg.editor, function (el) {
+                    guard(el);
+                    function persist() {
+                        adrCdStoreAiPresetText(kind, String(el.value || ""));
+                        adrDSetAllById(cfg.editor, el.value || "");
+                        adrCdSaveSoon();
+                    }
+                    el.addEventListener("input", persist);
+                    el.addEventListener("change", function () { persist(); saveNow(); });
+                });
+                each(id + "-name", function (el) { guard(el); });
+                each(id + "-select", function (el) {
+                    guard(el);
+                    el.addEventListener("change", function () { adrCdApplyAiPreset(kind, el.value); });
+                });
+            });
             each("adr044-cd-model-select", function (el) {
                 guard(el);
                 el.addEventListener("change", function () {
@@ -5520,10 +6151,16 @@
                     adrCdLoadEditor(String(el.value || ""));
                 });
             });
-            each("adr044-cd-lib-name", function (el) { guard(el); });
+            each("adr044-cd-lib-name", function (el) {
+                guard(el);
+                el.addEventListener("input", function () { var draft = adrCdCurrentDraft(); if (draft) draft.name = String(el.value || ""); });
+            });
             each("adr044-cd-lib-editor", function (el) {
                 guard(el);
                 el.addEventListener("input", function () {
+                    if (adrDLiveOutputs[el.id]) return;
+                    var draft = adrCdCurrentDraft();
+                    if (draft) { draft.text = String(el.value || ""); return; }
                     // 即改即生效：600ms 防抖写回正在编辑的那副库
                     if (adrCdEditorDebounce) clearTimeout(adrCdEditorDebounce);
                     adrCdEditorDebounce = setTimeout(function () {
@@ -5596,11 +6233,13 @@
 
     function adrCdEditSelectHTML() {
         var names = adrCdLibNames();
-        var sel = names[0] || "";
+        var draft = adrCdCurrentDraft();
+        var sel = draft ? "" : (names[0] || "");
         var opts = names.map(function (nm) {
             return '<option value="' + esc(nm) + '"' + (nm === sel ? " selected" : "") + '>' + esc(nm) + '</option>';
         }).join("");
-        return '<select id="adr044-cd-edit-select" data-optsig="' + esc(adrCdOptSig("edit", names, sel)) + '">' + opts + '</select>';
+        if (draft) opts = '<option value="" selected>AI 生成草稿（待保存）</option>' + opts;
+        return '<select id="adr044-cd-edit-select" data-optsig="' + esc(adrCdOptSig("edit", draft ? ["__draft__"].concat(names) : names, sel)) + '">' + opts + '</select>';
     }
 
     function adrCdPageInnerHTML(secOpen, secClose, checkClass, actionsClass) {
@@ -5608,25 +6247,41 @@
         var noteClass = checkClass === "adr048-check" ? "adr048-note" : "adr044-note";
         var mode = ADR_CD_MODES.indexOf(st.cdMode) >= 0 ? st.cdMode : "blind";
         var lifeMode = adrCdLifeMode();
-        return secOpen("剧情小风铃 🎐")
+        return secOpen("剧情小风铃 🎐", false, "cd-main")
             + '<label class="' + checkClass + '"><input type="checkbox" id="adr044-cd-enabled"' + (st.cdEnabled ? " checked" : "") + '> 启用剧情小风铃</label>'
             + '<div class="adr044-cd-status-line" id="adr044-cd-status-line" title="点一下展开／收起">状态加载中…</div>'
-            + '<div class="' + actionsClass + '"><button id="adr044-cd-preview-draw" type="button">试抽一张（仅预览）</button><button id="adr044-cd-selfcheck" type="button">🔧 自检</button></div>'
+            + '<div class="' + actionsClass + '"><button id="adr044-cd-preview-draw" type="button">免费试抽（盲抽预览）</button><button id="adr044-cd-selfcheck" type="button">🔧 自检</button></div>'
             + '<div class="adr044-cd-preview-out" id="adr044-cd-preview-out"></div>'
             + '<div class="adr044-cd-preview-out" id="adr044-cd-selfcheck-out"></div>'
-            + '<label>投卡间隔 N（每 N 个助手正文轮次投一张）：<b id="adr044-cd-n-val">' + esc(String(adrCdN())) + '</b> 楼</label>'
-            + '<input type="range" id="adr044-cd-n" min="1" max="20" step="1" value="' + esc(String(adrCdN())) + '">'
-            + '<label>抽卡模式</label>'
+            + '<label class="' + checkClass + '"><input type="checkbox" id="adr044-cd-auto-draw"' + (st.cdAutoDraw !== false ? " checked" : "") + '> 按楼数自动投卡（关闭＝仅手动，不自动调用抽卡或兑现 API）</label>'
+            + '<label>自动投卡间隔 N（每 N 个助手正文轮次执行一次）：<b id="adr044-cd-n-val">' + esc(String(adrCdN())) + '</b> 楼</label>'
+            + '<input type="range" id="adr044-cd-n" min="1" max="50" step="1" value="' + esc(String(adrCdN())) + '">'
+            + '<label>自动抽卡模式（手动按钮可以单独选择）</label>'
             + '<select id="adr044-cd-mode">'
             + opt(mode, "blind", "盲抽（零 API · 天马行空档）")
             + opt(mode, "pick", "择池（小眼睛只看池名点池，池内仍盲抽）")
             + opt(mode, "pickcard", "择卡（小眼睛看得见卡面，从几张候选里挑一张）")
             + '</select>'
+            + '<div class="' + noteClass + '">盲抽不调用 API；择池每次调用 1 次 API 选池，再在池内随机取卡；择卡每次调用 1 次 API 从候选中选卡。N 范围 1–50，不按轮询次数重复调用。开启自动时从当前楼重新计时。</div>'
+            + '<div class="' + actionsClass + ' adr044-cd-manual-actions"><button id="adr044-cd-draw-blind" type="button">手动盲抽 · 免费投卡</button><button id="adr044-cd-draw-pool" type="button">手动择池并投卡 · API</button><button id="adr044-cd-draw-card" type="button">手动择卡并投卡 · API</button></div>'
+            + '<div class="' + noteClass + '">手动按钮立即投放卡片，不必等 N 楼；会写入投卡史、替换耳边卡片并重新计算下次自动间隔。免费试抽只预览，不投放。</div>'
+            + '<div class="adr044-cd-preview-out adr044-cd-draw-output" id="adr044-cd-draw-output" role="status" aria-live="polite">手动或自动投卡的进度与结果会显示在这里。</div>'
             + '<label class="' + checkClass + '"><input type="checkbox" id="adr044-cd-paused"> 暂停投卡（只停这个聊天；关键场景不打扰）</label>'
             + '<div class="adr044-template-status" id="adr044-cd-pause-status"></div>'
             + secClose()
 
-            + secOpen("耳边这张卡")
+            + secOpen("择池 / 择卡预设", true, "cd-selection-presets")
+            + '<div class="' + noteClass + '">两类预设独立保存多个版本：择池控制如何从池名选池，择卡控制如何从候选卡面选卡。输出格式、候选范围与 NSFW 准入规则由系统保留，避免无法解析或误抽。Anima 总结跟随中控开关，不另加字数截断。</div>'
+            + '<h4 class="adr044-cd-preset-heading">择池 · 只看池名</h4>'
+            + adrCdAiPresetHTML("pool")
+            + '<h4 class="adr044-cd-preset-heading">择卡 · 从候选中选卡</h4>'
+            + adrCdAiPresetHTML("card")
+            + '<div class="' + actionsClass + '"><button type="button" id="adr044-cd-preview-pool">试运行择池（免费）</button><button type="button" id="adr044-cd-preview-card">试运行择卡（免费）</button></div>'
+            + '<div class="adr044-template-status" id="adr044-cd-selection-preview-status">试运行只展示将发送给 AI 的完整内容，不请求 API、不投卡。</div>'
+            + '<textarea id="adr044-cd-selection-preview" rows="8" readonly aria-label="择池或择卡完整发送预览" placeholder="点击上方试运行查看完整发送内容"></textarea>'
+            + secClose()
+
+            + secOpen("耳边这张卡", true, "cd-live")
             + '<div class="adr044-cd-life-card" id="adr044-cd-life-card">耳边暂无卡片。</div>'
             + '<div class="' + actionsClass + '"><button id="adr044-cd-close-card" type="button">✓ 这张已兑现，撤下</button></div>'
             + '<div class="adr044-template-status" id="adr044-cd-life-status">读到卡里的事已经落地了，点一下撤下它。下一张仍按原节奏来，中间那几楼留白，让剧情喘口气。</div>'
@@ -5637,12 +6292,29 @@
             + opt(lifeMode, "stay", "常驻：一直挂到下一张来换")
             + '</select>'
             + '<div class="adr044-template-status" id="adr044-cd-lifemode-note">' + esc(adrCdLifeModeNote()) + '</div>'
-            + '<label class="' + checkClass + '"><input type="checkbox" id="adr044-cd-autodone"' + (st.cdAutoDone ? " checked" : "") + '> 到半衰期时问一次小眼睛「兑现没」，答是就自动撤下（每张多一次调用，需填写择池 API；「只说一次」档跳过这一步，不产生费用）</label>'
+            + '<label class="' + checkClass + '"><input type="checkbox" id="adr044-cd-autodone"' + (st.cdAutoDone ? " checked" : "") + '> 到半衰期时问一次小眼睛「兑现没」，答是就自动撤下（每张多一次调用，需填写抽卡 API 并开启自动投卡；「只说一次」档跳过这一步，不产生费用）</label>'
             + '<label>投卡史</label>'
             + '<div class="adr044-cd-life-history" id="adr044-cd-life-history">还没投过卡。</div>'
             + secClose()
 
-            + secOpen("三个仓库")
+            + secOpen("AI 生成卡库", true, "cd-generation")
+            + '<div class="' + noteClass + '">这里调用择池／择卡 API 生成卡库。可以先「试运行」查看将发送给 AI 的完整内容；真正生成后只回填编辑器，不会自动保存。Anima 总结严格跟随中控：开启才读取并发送，关闭则不读取、不发送。</div>'
+            + '<label>抽卡预设 · 生成卡库（支持多个版本）</label>'
+            + adrCdAiPresetHTML("generate")
+            + '<div class="adr044-template-status">这是生成卡库的固定规则；下面的「本次生成要求」只影响当前这一轮。抽卡 AI 同时沿用中控的聊天读取规则、内容过滤，以及 Anima 历史总结的开关、条数和前缀。</div>'
+            + '<label>本次生成要求（只影响当前这一轮）</label>'
+            + '<textarea id="adr044-cd-gen-prompt" rows="3" placeholder="例如：为当前都市悬疑剧情生成围绕失踪案、旧账和暗线人物的事件卡；不填则按当前剧情自动生成"></textarea>'
+            + '<label>生成卡池数（1–6）</label><input type="number" id="adr044-cd-gen-pools" min="1" max="6" step="1" value="3">'
+            + '<label>每池卡数（2–10）</label><input type="number" id="adr044-cd-gen-cards" min="2" max="10" step="1" value="5">'
+            + '<div class="adr044-template-status" id="adr044-cd-gen-status">可先试运行看看将发给 AI 的完整内容，或直接点「思考生成卡库」。</div>'
+            + '<textarea id="adr044-cd-gen-preview" rows="8" readonly placeholder="点击「试运行（不花钱）」查看完整发送内容"></textarea>'
+            + '<div class="' + actionsClass + '"><button type="button" id="adr044-cd-gen-local">试运行（不花钱）</button><button type="button" id="adr044-cd-generate">🧠 思考生成卡库</button></div>'
+            + '<label>生成/导入落点（生成结果回填编辑器后，保存时挂入这里）</label>'
+            + adrCdImportSlotSelectHTML()
+            + '<div class="adr044-template-status">可以先试运行；真正生成后只回填编辑器，确认内容后再保存。导入卡库也会沿用这里的落点。</div>'
+            + secClose()
+
+            + secOpen("三个仓库", true, "cd-repositories")
             + '<div class="' + noteClass + '">启用哪几格，就在哪几格之间均等掷——仓库数即权重。专属库配角色卡，通用库打底，NSFW 库单独一格。点亮=这局使用（换聊天各记各的）；库住哪个箱是永久的，灰芯片=在箱未用，虚线=未分箱。</div>'
             + adrCdSlotRowHTML("story", checkClass)
             + adrCdSlotRowHTML("common", checkClass)
@@ -5650,7 +6322,7 @@
             + '<div class="adr044-template-status" id="adr044-cd-slot-status">点一下芯片＝这局用不用它；开关＝整格用不用。每次点完这里会回报存没存进去。</div>'
             + secClose()
 
-            + secOpen("编辑卡库")
+            + secOpen("编辑卡库", true, "cd-editor")
             + '<label>正在编辑</label>'
             + adrCdEditSelectHTML()
             + '<input type="text" id="adr044-cd-lib-name" placeholder="卡库名（保存＝新建或更新；重命名＝改当前这副）">'
@@ -5659,18 +6331,15 @@
             + '<button type="button" id="adr044-cd-lib-rename">重命名</button>'
             + '<button type="button" id="adr044-cd-lib-delete">删除</button>'
             + '</div>'
-            + '<label>保存/导入落点（新库存好后自动挂进这里）</label>'
-            + adrCdImportSlotSelectHTML()
             + '<div class="adr044-template-mini-actions">'
             + '<button type="button" id="adr044-cd-import">导入 .txt/.md</button>'
             + '<button type="button" id="adr044-cd-export">导出这副</button>'
             + '</div>'
             + '<input type="file" id="adr044-cd-import-file" class="adr044-cd-import-file" accept=".txt,.md,text/plain,text/markdown">'
-            + '<div class="adr044-template-status" id="adr044-cd-lib-status">## 开一门卡池，一行一张卡；// 开头是注释；即改即生效。</div>'
+            + '<div class="adr044-template-status" id="adr044-cd-lib-status">## 开一门卡池，一行一张卡；// 开头是注释。已有卡库即改即生效；AI 生成草稿需点击「保存」确认。</div>'
             + '<textarea id="adr044-cd-lib-editor" rows="12" placeholder="## 卡池名&#10;一行一张卡…"></textarea>'
             + secClose()
-
-            + secOpen("择池／择卡 API（这两档才用）", true)
+            + secOpen("抽卡 API · 择池 / 择卡 / 兑现 / 生成", true, "cd-api")
             + '<div class="adr044-template-compact adr044-api-profile-compact">'
             + '<select id="adr044-api-profile-select-cd">' + adrDApiProfileSelectOptions("cd", adrDSelectedApiProfileName("cd") || "") + '</select>'
             + '<input type="text" id="adr044-api-profile-name-cd" value="' + esc(adrDSelectedApiProfileName("cd") || "") + '" placeholder="预设名，如 DS">'
@@ -5683,11 +6352,16 @@
             + '<label>API 密钥</label><input type="password" id="adr044-cd-key" value="' + esc(st.cdApiKey || "") + '" placeholder="sk-...">'
             + '<label>模型</label><input type="text" id="adr044-cd-model" value="' + esc(st.cdModel || "") + '" placeholder="可以手填，或加载模型">'
             + '<select id="adr044-cd-model-select"><option value="">加载后在此选择模型</option></select>'
+            + '<label class="' + checkClass + '"><input type="checkbox" id="adr044-cd-stream"' + (st.cdStreamEnabled === true ? " checked" : "") + '> 开启抽卡 API 流式输出</label>'
+            + '<div class="' + noteClass + '">独立于情感导演的流式开关；择池、择卡、兑现判断、生成卡库和连接测试共用。关闭时等待完整答复；开启时逐步显示正文 / 接收状态，也兼容返回整份 JSON 的服务商。</div>'
+            + '<label for="adr044-cd-reply-tokens">择池 / 择卡 / 兑现的输出 token 预算（含模型思考；200–32000）</label>'
+            + '<input type="number" id="adr044-cd-reply-tokens" min="200" max="32000" step="100" value="' + esc(String(adrCdReplyTokens())) + '">'
+            + '<div class="' + noteClass + '">只控制这些请求的输出预算，不裁剪发送给 AI 的 Anima 总结。生成卡库另用 4000 tokens 的输出预算。</div>'
             + '<div class="' + actionsClass + '"><button id="adr044-cd-load-models" type="button">加载模型</button><button id="adr044-cd-test" type="button">测试连接</button><button id="adr044-cd-save" type="button">保存当前使用</button></div>'
-            + '<div class="adr044-template-status" id="adr044-cd-status">择池与择卡都用这里的 API；任何异常当场降级盲抽，不停摆（降级时 NSFW 一律不参与）。试抽恒为盲抽，不产生费用。</div>'
+            + '<div class="adr044-template-status" id="adr044-cd-status">择池、择卡、兑现判断与生成卡库都用这里的 API。选池/选卡失败会明确显示原因并降级盲抽（NSFW 不参与降级）；免费试抽和试运行不调用 API。</div>'
             + secClose()
 
-            + secOpen("高级 · 注入与信封", true)
+            + secOpen("高级 · 注入与信封", true, "cd-advanced")
             + '<label>注入深度（从最新消息往回数，默认 2）</label><input type="number" id="adr044-cd-depth" min="0" max="4" value="' + esc(String(adrCdDepth())) + '">'
             + '<label>冷却区（最近 M 张不复用，默认 8，最多 32）</label><input type="number" id="adr044-cd-cooldown" min="0" max="32" value="' + esc(String(adrCdCooldown())) + '">'
             + '<label>信封预设（不同模型吃不同话术）</label>'
@@ -5704,15 +6378,15 @@
             + '<textarea id="adr044-cd-envelope-faded" rows="3">' + esc(adrCdEnvelopePair().faded) + '</textarea>'
             + secClose()
 
-            + secOpen("卡面家法", true)
+            + secOpen("卡面家法", true, "cd-help")
             + '<div class="' + noteClass + '" style="white-space:pre-wrap">' + esc(ADR_CD_HELP_TEXT) + '</div>'
             + secClose();
     }
 
     function adrCdPageHTML() {
         var st = settings();
-        function secOpen(title, closed) {
-            return '<details' + (closed ? '' : ' open') + '><summary>' + title + '</summary>';
+        function secOpen(title, closed, id) {
+            return adrxModuleStart(id, title, !closed, false);
         }
         function secClose() { return '</details>'; }
         return '<div class="adr044-page" id="adr044-page-cd"' + (st.activeTab === "cd" ? '' : ' style="display:none"') + '>'
@@ -5722,10 +6396,10 @@
 
     function adrCd048PageHTML() {
         var st = settings();
-        function secOpen(title) {
-            return '<div class="adr048-section"><div class="adr048-summary">' + title + '</div>';
+        function secOpen(title, closed, id) {
+            return adrxModuleStart(id, title, !closed, true);
         }
-        function secClose() { return '</div>'; }
+        function secClose() { return '</details>'; }
         return '<div class="adr048-page" id="adr048-page-cd"' + (st.activeTab === "cd" ? '' : ' style="display:none"') + '>'
             + adrCdPageInnerHTML(secOpen, secClose, "adr048-check", "adr048-actions")
             + '</div>';
@@ -5745,7 +6419,7 @@
         var autoKey = type === "plot" ? "autoInjectPlot" : "autoInjectEmotion";
 
         return '<div class="adr044-page" id="adr044-page-' + type + '"' + (st.activeTab === type ? '' : ' style="display:none"') + '>'
-            + '<details open><summary>' + title + '配置</summary>'
+            + adrxModuleStart(type + "-config", title + "配置", false, false)
             + '<label>API 预设</label>'
             + '<div class="adr044-template-compact adr044-api-profile-compact">'
             + '<select id="adr044-api-profile-select-' + type + '">' + adrDApiProfileSelectOptions(type, adrDSelectedApiProfileName(type) || "") + '</select>'
@@ -5777,7 +6451,7 @@
             + '<div class="adr044-auto-calibrate-row"><button class="adr044-auto-calibrate" id="adr044-' + type + '-calibrate-auto" type="button">重新对表（从现在起重数间隔）</button></div>'
             + '</details>'
 
-            + '<details><summary>' + title + '预设</summary>'
+            + adrxModuleStart(type + "-preset", title + "预设", false, false)
             + '<div class="adr044-template-compact">'
             + '<select id="adr044-template-select-' + type + '">' + adrDTemplateOptions(type) + '</select>'
             + '<input id="adr044-template-name-' + type + '" placeholder="新模板名 / 当前模板名">'
@@ -5790,7 +6464,7 @@
             + '<textarea id="adr044-' + type + '-preset" rows="8">' + esc(st[p + "Preset"] || "") + '</textarea>'
             + '</details>'
 
-            + '<details open><summary>' + title + '结果</summary>'
+            + adrxModuleStart(type + "-result", title + "结果", true, false)
             + '<div id="adr044-' + type + '-status">可先试运行看看导演会读到什么，或直接点「分析」。</div>'
             + '<textarea id="adr044-' + type + '-preview" rows="8" placeholder="生成结果显示在这里">' + esc(st[p + "Preview"] || "") + '</textarea>'
             + '<label>想对导演说的话（选填）</label><input type="text" id="adr044-' + type + '-extra" placeholder="空着就是普通分析；填了导演会带着你的要求分析">'
@@ -5933,6 +6607,8 @@
 
     function adrDSetAllById(id, value, checked) {
         try {
+            var live = adrDLiveOutputs[id];
+            if (live) value = live.text;
             var nodes = Array.prototype.slice.call(rootDoc().querySelectorAll("#" + id));
             nodes.forEach(function (el) {
                 if (!el) return;
@@ -5940,9 +6616,15 @@
                     if (el.checked !== !!checked) el.checked = !!checked;
                 } else {
                     var nextValue = value == null ? "" : String(value);
-                    if (el.value !== nextValue) el.value = nextValue;
+                    if (live) {
+                        if (el.__adrDLiveReadOnly === undefined) el.__adrDLiveReadOnly = !!el.readOnly;
+                        el.readOnly = true;
+                        el.setAttribute("aria-busy", "true");
+                    }
+                    adrDWriteOutputValue(el, nextValue);
                 }
             });
+            adrDSyncExpandedOutput(id, value == null ? "" : String(value));
         } catch (e) {}
     }
 
@@ -6859,6 +7541,7 @@
 
     function adrDRequestManualInject(type, btn) {
         type = type === "plot" ? "plot" : "emotion";
+        if (adrDLiveOutputs["adr044-" + type + "-preview"]) { status(type, "正在接收，请等待完整结果后再注入", "#d6b177"); return false; }
         return adrDTwoStepConfirm(
             "manual-inject-" + type,
             btn || qForm("adr044-" + type + "-inject"),
@@ -6866,6 +7549,7 @@
             "再点一次确认注入",
             function (msg) { status(type, msg, "#d6a26a"); },
             function () {
+                if (adrDLiveOutputs["adr044-" + type + "-preview"]) return;
                 syncType(type);
                 var pv = qForm("adr044-" + type + "-preview");
                 var text = pv ? pv.value : "";
@@ -7076,9 +7760,29 @@
                 try { count.textContent = String(ta.value || "").length + " 字"; } catch (e) {}
             }
             refreshCount();
-            ta.addEventListener("input", refreshCount);
+            ov.__adrxSourceId = el.id;
+            ov.__adrxDirty = false;
+            ov.__adrxSyncSource = function (value) {
+                var live = adrDLiveOutputs[el.id];
+                var readOnly = !!live || !!el.readOnly;
+                if (!ov.__adrxDirty || live) {
+                    adrDWriteOutputValue(ta, String(value || ""));
+                    if (live) ov.__adrxDirty = false;
+                }
+                ta.readOnly = readOnly;
+                ta.setAttribute("aria-busy", live ? "true" : "false");
+                ov.querySelector(".adrx-editor-ok").textContent = readOnly ? "关闭" : "确定";
+                var cancel = ov.querySelector(".adrx-editor-cancel");
+                if (readOnly) cancel.style.setProperty("display", "none", "important");
+                else cancel.style.removeProperty("display");
+                refreshCount();
+                if (live) count.textContent = "正在接收 · " + count.textContent;
+            };
+            ta.addEventListener("input", function () { ov.__adrxDirty = true; refreshCount(); });
+            ov.__adrxSyncSource(el.value);
 
             function commit() {
+                if (adrDLiveOutputs[el.id] || el.readOnly) { adrxCloseBigEditor(); return; }
                 try {
                     var v = String(ta.value || "");
                     if (isInput) v = v.replace(/\r?\n+/g, " ");
@@ -7175,10 +7879,22 @@
         ids["adr044-cd-test"] = function () { adrCdTestConnection(); };
         ids["adr044-cd-save"] = function () { syncType("cd"); status("cd", "已保存当前使用的择池 API ✓", "#8ed99d"); };
         ids["adr044-cd-preview-draw"] = function () { adrCdPreviewDraw(); };
+        ["draw-blind", "draw-pool", "draw-card", "preview-pool", "preview-card"].forEach(function (suffix) {
+            var id = "adr044-cd-" + suffix;
+            ids[id] = function () { adrCdHandleButtonId(id, qForm(id)); };
+        });
+        ["generate", "pool", "card"].forEach(function (kind) {
+            ["save", "delete"].forEach(function (action) {
+                var id = "adr044-cd-ai-" + kind + "-" + action;
+                ids[id] = function () { adrCdHandleButtonId(id, qForm(id)); };
+            });
+        });
         ids["adr044-cd-lib-save"] = function () { adrCdSaveLibraryFromEditor(); };
         ids["adr044-cd-lib-delete"] = function () { adrCdRequestDeleteLibrary(qForm("adr044-cd-lib-delete")); };
         ids["adr044-cd-export"] = function () { adrCdExportLibrary(); };
         ids["adr044-cd-import"] = function () { adrCdTriggerImport(); };
+        ids["adr044-cd-generate"] = function () { adrCdGenerateLibrary(); };
+        ids["adr044-cd-gen-local"] = function () { adrCdPreviewLibraryGeneration(); };
         ids["adr044-probe-context"] = function () { runContextProbe(); };
         ids["adr044-probe-content"] = function () { runContentProbe(); };
         ids["adr044-preview-precise"] = function () { runPrecisePreview(); };
@@ -7506,7 +8222,7 @@
         var autoKey = type === "plot" ? "autoInjectPlot" : "autoInjectEmotion";
 
         return '<div class="adr048-page" id="adr048-page-' + type + '"' + (st.activeTab === type ? '' : ' style="display:none"') + '>'
-            + '<div class="adr048-section"><div class="adr048-summary">' + title + '配置</div>'
+            + adrxModuleStart(type + "-config", title + "配置", false, true)
             + '<label>API 预设</label>'
             + '<div class="adr044-template-compact adr044-api-profile-compact">'
             + '<select id="adr044-api-profile-select-' + type + '">' + adrDApiProfileSelectOptions(type, adrDSelectedApiProfileName(type) || "") + '</select>'
@@ -7536,9 +8252,9 @@
             + '<div class="adr044-auto-counter" id="adr044-auto-counter-' + type + '">计数加载中…</div>'
             + '<div class="adr048-note adr048-auto-reroll-note">ℹ️ 触发层重 roll 不会自动再触发；如需基于新回复补导演建议，点「分析」即可，想附加要求就先填补充指令。</div>'
             + '<div class="adr044-auto-calibrate-row"><button class="adr044-auto-calibrate" id="adr044-' + type + '-calibrate-auto" type="button">重新对表（从现在起重数间隔）</button></div>'
-            + '</div>'
+            + '</details>'
 
-            + '<div class="adr048-section"><div class="adr048-summary">' + title + '预设</div>'
+            + adrxModuleStart(type + "-preset", title + "预设", false, true)
             + '<div class="adr044-template-compact">'
             + '<select id="adr044-template-select-' + type + '">' + adrDTemplateOptions(type) + '</select>'
             + '<input id="adr044-template-name-' + type + '" placeholder="新模板名 / 当前模板名">'
@@ -7549,16 +8265,16 @@
             + '<div class="adr044-template-status" id="adr044-template-status-' + type + '"></div>'
             + '</div>'
             + '<textarea id="adr044-' + type + '-preset" rows="8">' + esc(st[p + "Preset"] || "") + '</textarea>'
-            + '</div>'
+            + '</details>'
 
-            + '<div class="adr048-section"><div class="adr048-summary">' + title + '结果</div>'
+            + adrxModuleStart(type + "-result", title + "结果", true, true)
             + '<div id="adr044-' + type + '-status" class="adr048-status">可先试运行看看导演会读到什么，或直接点「分析」。</div>'
             + '<textarea id="adr044-' + type + '-preview" rows="8" placeholder="生成结果显示在这里">' + esc(st[p + "Preview"] || "") + '</textarea>'
             + '<label>想对导演说的话（选填）</label><input type="text" id="adr044-' + type + '-extra" placeholder="空着就是普通分析；填了导演会带着你的要求分析">'
             + '<div class="adr048-actions"><button id="adr044-' + type + '-local" type="button">试运行（不花钱）</button><button id="adr044-' + type + '-generate" type="button">分析</button></div>'
             + '<div class="adr048-actions"><button id="adr044-' + type + '-stop" type="button" disabled>打断</button><button id="adr044-' + type + '-copy" type="button">复制</button></div>'
             + '<div class="adr048-actions"><button id="adr044-' + type + '-inject" type="button">把这份稿挂上</button><button id="adr044-' + type + '-graze" type="button">放养</button></div>'
-            + '</div>'
+            + '</details>'
             + '</div>';
     }
 
@@ -7583,6 +8299,24 @@
         return '<details class="adrx-drawer" data-drawer-id="' + id + '"' + adrxDrawerOpenAttr(id, defOpen) + '><summary>' + label + '</summary>';
     }
 
+    // 各标签页使用原生 details；键盘可操作，抽屉/浮窗共用持久化开合状态。
+    function adrxModuleStart(id, label, defOpen, popup) {
+        return '<details class="adrx-module' + (popup ? ' adr048-section' : '') + '" data-drawer-id="' + esc(id) + '"'
+            + adrxDrawerOpenAttr(id, defOpen) + '><summary class="' + (popup ? 'adr048-summary ' : '') + 'adrx-module-summary">' + esc(label) + '</summary>';
+    }
+
+    function adrxRevealModuleFor(id) {
+        try {
+            Array.prototype.slice.call(rootDoc().querySelectorAll("#" + id)).forEach(function (el) {
+                var parent = el.parentElement;
+                while (parent && parent.id !== "adr048-popup-body" && parent.id !== "adr044-drawer") {
+                    if (parent.matches("details[data-drawer-id]")) parent.open = true;
+                    parent = parent.parentElement;
+                }
+            });
+        } catch (e) {}
+    }
+
     function adrxInstallDrawerMemory() {
         try {
             var d = rootDoc();
@@ -7591,12 +8325,17 @@
             d.addEventListener("toggle", function (ev) {
                 try {
                     var t = ev.target;
-                    if (!t || !t.classList || !t.classList.contains("adrx-drawer")) return;
+                    if (!t || !t.classList || (!t.classList.contains("adrx-drawer") && !t.classList.contains("adrx-module"))) return;
                     var id = t.getAttribute("data-drawer-id");
                     if (!id) return;
                     var s = adrxDrawerStates();
-                    s[id] = !!t.open;
-                    adrDWriteJsonLS(ADRX_DRAWER_KEY, s);
+                    if (s[id] !== !!t.open) {
+                        s[id] = !!t.open;
+                        adrDWriteJsonLS(ADRX_DRAWER_KEY, s);
+                    }
+                    Array.prototype.slice.call(d.querySelectorAll("details[data-drawer-id]")).forEach(function (other) {
+                        if (other !== t && other.getAttribute("data-drawer-id") === id && other.open !== t.open) other.open = t.open;
+                    });
                 } catch (e) {}
             }, true);
         } catch (e) {}
@@ -7745,22 +8484,26 @@
                 adr048SetImportant(p, "width", "100vw");
                 adr048SetImportant(p, "height", "100vh");
                 adr048SetImportant(p, "z-index", "2147483646");
-                adr048SetImportant(p, "background", "rgba(0,0,0,.25)");
+                adr048SetImportant(p, "background", "transparent");
+                adr048SetImportant(p, "backdrop-filter", "none");
+                adr048SetImportant(p, "-webkit-backdrop-filter", "none");
 
                 adr048SetImportant(shell, "display", "flex");
                 adr048SetImportant(shell, "flex-direction", "column");
                 adr048SetImportant(shell, "visibility", "visible");
                 adr048SetImportant(shell, "opacity", "1");
                 adr048SetImportant(shell, "pointer-events", "auto");
+                var isDesktop = (rootWin().innerWidth || 0) >= 700;
                 adr048SetImportant(shell, "position", "fixed");
-                adr048SetImportant(shell, "left", "10px");
-                adr048SetImportant(shell, "right", "10px");
-                adr048SetImportant(shell, "top", "64px");
-                adr048SetImportant(shell, "bottom", "64px");
-                adr048SetImportant(shell, "width", "auto");
-                adr048SetImportant(shell, "height", "auto");
-                adr048SetImportant(shell, "min-height", "360px");
-                adr048SetImportant(shell, "max-height", "calc(100vh - 128px)");
+                adr048SetImportant(shell, "left", isDesktop ? "50%" : "10px");
+                adr048SetImportant(shell, "right", isDesktop ? "auto" : "10px");
+                adr048SetImportant(shell, "top", isDesktop ? "50%" : "64px");
+                adr048SetImportant(shell, "bottom", isDesktop ? "auto" : "64px");
+                adr048SetImportant(shell, "width", isDesktop ? "min(760px, calc(100vw - 48px))" : "auto");
+                adr048SetImportant(shell, "height", isDesktop ? "min(82vh, 760px)" : "auto");
+                adr048SetImportant(shell, "min-height", isDesktop ? "0" : "360px");
+                adr048SetImportant(shell, "max-height", isDesktop ? "none" : "calc(100vh - 128px)");
+                adr048SetImportant(shell, "transform", isDesktop ? "translate(-50%, -50%)" : "translateZ(0)");
                 adr048SetImportant(shell, "z-index", "2147483647");
                 adr048SetImportant(shell, "overflow", "hidden");
                 adr048SetImportant(shell, "background", "rgba(42,52,67,.98)");
@@ -7910,7 +8653,9 @@
             p.setAttribute("data-arb-theme", mode);
 
             if (p.getAttribute("data-open") === "1") {
-                adr048SetImportant(p, "background", dawn ? "rgba(228,207,224,.40)" : "rgba(0,0,0,.25)");
+                adr048SetImportant(p, "background", "transparent");
+                adr048SetImportant(p, "backdrop-filter", "none");
+                adr048SetImportant(p, "-webkit-backdrop-filter", "none");
             }
 
             var shell = d.querySelector("#adr048-popup-shell");
@@ -7929,7 +8674,9 @@
 
             var tg = d.querySelector("#adr048-theme-toggle");
             if (mode === "tavern") {
-                adr048SetImportant(p, "background", "var(--adr-native-overlay)");
+                adr048SetImportant(p, "background", "transparent");
+                adr048SetImportant(p, "backdrop-filter", "none");
+                adr048SetImportant(p, "-webkit-backdrop-filter", "none");
                 if (shell) {
                     adr048SetImportant(shell, "background", "var(--adr-native-surface, var(--SmartThemeBlurTintColor))");
                     adr048SetImportant(shell, "color", "var(--adr-native-ink, var(--SmartThemeBodyColor))");
@@ -9108,14 +9855,14 @@
     // 已积累进度原地保住；partial 场景没有删除事件、轮询也不会在同会话内看到缩水，铁律照旧生效。
     function adrCdShiftBaselineDown(delta, count) {
         try {
-            var state = adrCdChatState();
-            var base = Number(state.lastDrawAt);
-            if (!Number.isFinite(base) || base < 0) return;
-            var nb = Math.min(Math.max(0, base - delta), Number(count));
-            if (nb === base) return;
-            state.lastDrawAt = nb;
-            adrCdSaveChatState(state);
-            try { console.log("[抽卡小能手] 删楼位移基准线", { from: base, to: nb, delta: delta }); } catch (eL) {}
+            var state = adrCdChatState(), changed = false;
+            ["lastDrawAt", "lastAutoAttemptAt"].forEach(function (key) {
+                var base = Number(state[key]);
+                if (!Number.isFinite(base) || base < 0) return;
+                var next = Math.min(Math.max(0, base - delta), Number(count));
+                if (next !== base) { state[key] = next; changed = true; }
+            });
+            if (changed) adrCdSaveChatState(state);
         } catch (e) {}
     }
 

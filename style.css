@@ -119,7 +119,7 @@
     visibility: hidden !important;
     opacity: 0 !important;
     pointer-events: none !important;
-    background: rgba(0,0,0,.12) !important;
+    background: transparent !important;
 }
 
 #adr048-popup-panel[data-open="1"] {
@@ -232,7 +232,7 @@
     visibility: hidden !important;
     opacity: 0 !important;
     pointer-events: none !important;
-    background: rgba(0,0,0,.25) !important;
+    background: transparent !important;
 }
 
 #adr048-popup-panel[data-open="1"] {
@@ -1016,9 +1016,9 @@
    ============================================================ */
 
 #adr048-popup-panel {
-    background: rgba(12, 7, 10, .42) !important;
-    backdrop-filter: blur(3px) saturate(1.02) !important;
-    -webkit-backdrop-filter: blur(3px) saturate(1.02) !important;
+    background: transparent !important;
+    backdrop-filter: none !important;
+    -webkit-backdrop-filter: none !important;
 }
 
 #adr048-popup-shell {
@@ -2624,14 +2624,10 @@ html #adr048-popup-panel[data-arb-theme="dusk"] #adr048-popup-body .adr044-cd-ch
         linear-gradient(135deg, rgba(255, 250, 252, .14), rgba(234, 239, 250, .10));
 }
 
-/* 幕布只有静态柔光，真正的内容面保持清晰。 */
+/* PC 悬浮窗外部不再铺设柔光幕布，避免整页出现透明粉色覆盖层。 */
 #adr048-popup-panel::before {
-    content: "";
-    position: fixed;
-    inset: 0;
-    z-index: 0;
-    pointer-events: none;
-    background: var(--arb-backdrop);
+    content: none !important;
+    background: none !important;
 }
 
 #adr048-popup-shell {
@@ -4131,8 +4127,8 @@ html #adrx-editor[data-arb-theme="dawn"] {
 
 /* ---- 幕布与壳体 ---- */
 html #adr048-popup-panel[data-arb-theme] {
-    backdrop-filter: blur(10px) saturate(1.08) !important;
-    -webkit-backdrop-filter: blur(10px) saturate(1.08) !important;
+    backdrop-filter: none !important;
+    -webkit-backdrop-filter: none !important;
 }
 
 html #adr048-popup-panel[data-arb-theme] #adr048-popup-shell {
@@ -6085,4 +6081,289 @@ html :is(#adr048-popup-panel[data-arb-theme="tavern"] #adr048-popup-body,
     :is(.adr048-summary, .adrx-editor-title)::before {
     background: var(--arb-rose) !important;
     box-shadow: none !important;
+}
+
+/* v1.9.27：统一美化选择复选框。保留外层开关语义，进阶项使用更紧凑的方形勾选。 */
+html :is(#adr048-popup-panel, #adr044-drawer) :is(.adr048-check, .adr044-check) {
+    display: flex !important;
+    align-items: center !important;
+    gap: 10px !important;
+    min-height: 38px !important;
+    margin: 6px 0 !important;
+    padding: 8px 10px !important;
+    border: 1px solid var(--arb-line, var(--adrx-line, rgba(120, 120, 140, .24))) !important;
+    border-radius: 13px !important;
+    background: var(--arb-card, var(--adrx-card, rgba(120, 120, 140, .07))) !important;
+    color: var(--arb-ink, var(--adrx-ink, inherit)) !important;
+    line-height: 1.45 !important;
+    white-space: normal !important;
+    cursor: pointer !important;
+    user-select: none !important;
+    transition: background .16s ease, border-color .16s ease, box-shadow .16s ease, transform .16s ease !important;
+}
+
+html :is(#adr048-popup-panel, #adr044-drawer) :is(.adr048-check, .adr044-check):hover {
+    border-color: var(--arb-rose, var(--adrx-rose, #d67a6a)) !important;
+    background: var(--arb-card-strong, var(--adrx-card-strong, rgba(214, 122, 106, .10))) !important;
+    transform: translateY(-1px) !important;
+}
+
+html :is(#adr048-popup-panel, #adr044-drawer) :is(.adr048-check, .adr044-check):focus-within {
+    border-color: var(--arb-rose, var(--adrx-rose, #d67a6a)) !important;
+    box-shadow: 0 0 0 3px color-mix(in srgb, var(--arb-rose, #d67a6a) 16%, transparent) !important;
+}
+
+html :is(#adr048-popup-panel, #adr044-drawer) :is(.adr048-check, .adr044-check):has(input[type="checkbox"]:checked) {
+    border-color: color-mix(in srgb, var(--arb-rose, #d67a6a) 62%, var(--arb-line, transparent)) !important;
+    background: color-mix(in srgb, var(--arb-rose, #d67a6a) 9%, var(--arb-card, rgba(120, 120, 140, .07))) !important;
+    box-shadow: 0 5px 16px color-mix(in srgb, var(--arb-rose, #d67a6a) 12%, transparent) !important;
+}
+
+html :is(#adr048-popup-panel, #adr044-drawer) :is(.adr048-check, .adr044-check) input[type="checkbox"] {
+    appearance: none !important;
+    -webkit-appearance: none !important;
+    position: relative !important;
+    flex: 0 0 38px !important;
+    width: 38px !important;
+    min-width: 38px !important;
+    max-width: 38px !important;
+    height: 22px !important;
+    min-height: 22px !important;
+    margin: 0 !important;
+    padding: 0 !important;
+    border: 1px solid var(--arb-line-strong, var(--adrx-line-strong, rgba(100, 100, 120, .30))) !important;
+    border-radius: 999px !important;
+    background:
+        radial-gradient(circle at 10px 50%, #fff 0 6px, transparent 6.8px),
+        var(--arb-field, var(--adrx-field, rgba(120, 120, 140, .13))) !important;
+    box-shadow: inset 0 1px 2px rgba(50, 45, 80, .10) !important;
+    cursor: pointer !important;
+    transition: background .18s ease, border-color .18s ease, box-shadow .18s ease !important;
+}
+
+html :is(#adr048-popup-panel, #adr044-drawer) :is(.adr048-check, .adr044-check) input[type="checkbox"]:checked {
+    border-color: transparent !important;
+    background:
+        radial-gradient(circle at calc(100% - 10px) 50%, #fff 0 6px, transparent 6.8px),
+        linear-gradient(90deg, var(--arb-rose, var(--adrx-rose, #d67a6a)), var(--arb-lilac, #b890cf)) !important;
+    box-shadow: 0 3px 10px color-mix(in srgb, var(--arb-rose, #d67a6a) 26%, transparent) !important;
+}
+
+html :is(#adr048-popup-panel, #adr044-drawer) :is(.adr048-check, .adr044-check) input[type="checkbox"]:focus-visible {
+    outline: 2px solid var(--arb-rose, var(--adrx-rose, #d67a6a)) !important;
+    outline-offset: 3px !important;
+}
+
+html :is(#adr048-popup-panel, #adr044-drawer) :is(.adr048-check, .adr044-check) input[type="checkbox"]::after {
+    content: none !important;
+}
+
+/* 进阶设置里的复选项改为更轻量的方形勾选，避免和主开关混淆。 */
+html :is(#adr048-popup-panel, #adr044-drawer) .adrx-drawer :is(.adr048-check, .adr044-check) {
+    min-height: 32px !important;
+    margin: 4px 0 !important;
+    padding: 6px 8px !important;
+    border-radius: 10px !important;
+    background: transparent !important;
+    box-shadow: none !important;
+}
+
+html :is(#adr048-popup-panel, #adr044-drawer) .adrx-drawer :is(.adr048-check, .adr044-check) input[type="checkbox"] {
+    flex-basis: 20px !important;
+    width: 20px !important;
+    min-width: 20px !important;
+    max-width: 20px !important;
+    height: 20px !important;
+    min-height: 20px !important;
+    border-radius: 6px !important;
+    background: var(--arb-field, var(--adrx-field, rgba(120, 120, 140, .10))) !important;
+}
+
+html :is(#adr048-popup-panel, #adr044-drawer) .adrx-drawer :is(.adr048-check, .adr044-check) input[type="checkbox"]:checked {
+    border-color: transparent !important;
+    background:
+        url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'%3E%3Cpath d='M3.5 8.5l3 3 6-6.5' fill='none' stroke='%23ffffff' stroke-width='2.2' stroke-linecap='round' stroke-linejoin='round'/%3E%3C/svg%3E") center / 13px 13px no-repeat,
+        linear-gradient(135deg, var(--arb-rose, var(--adrx-rose, #d67a6a)), var(--arb-lilac, #b890cf)) !important;
+}
+
+html :is(#adr048-popup-panel, #adr044-drawer) #adr044-cd-gen-preview {
+    min-height: 170px !important;
+    font-family: ui-monospace, SFMono-Regular, Consolas, "Liberation Mono", monospace !important;
+    font-size: 12px !important;
+    line-height: 1.55 !important;
+    resize: vertical !important;
+}
+
+@media (prefers-reduced-motion: reduce) {
+    html :is(#adr048-popup-panel, #adr044-drawer) :is(.adr048-check, .adr044-check),
+    html :is(#adr048-popup-panel, #adr044-drawer) :is(.adr048-check, .adr044-check) input[type="checkbox"] {
+        transition: none !important;
+    }
+}
+
+/* 抽卡 AI：版本工具栏与手动动作保持紧凑，完整预览在面板内滚动。 */
+html :is(#adr048-popup-panel, #adr044-drawer) .adr044-cd-ai-presets .adr044-template-compact {
+    display: grid !important;
+    grid-template-columns: minmax(0, 1fr) minmax(0, 1fr) !important;
+    gap: 8px !important;
+}
+html :is(#adr048-popup-panel, #adr044-drawer) .adr044-cd-ai-presets .adr044-template-compact > :is(select, input) {
+    min-width: 0 !important;
+    margin: 0 !important;
+}
+html :is(#adr048-popup-panel, #adr044-drawer) .adr044-cd-ai-presets .adr044-template-mini-actions {
+    grid-column: 1 / -1 !important;
+    display: flex !important;
+    flex-wrap: wrap !important;
+    gap: 8px !important;
+    margin: 0 !important;
+}
+html :is(#adr048-popup-panel, #adr044-drawer) .adr044-cd-preset-heading {
+    margin: 16px 0 6px !important;
+    font-size: 13px !important;
+    font-weight: 600 !important;
+    color: var(--arb-ink, var(--adrx-ink, inherit)) !important;
+}
+html :is(#adr048-popup-panel, #adr044-drawer) .adr044-cd-manual-actions {
+    display: flex !important;
+    flex-wrap: wrap !important;
+    gap: 8px !important;
+}
+html :is(#adr048-popup-panel, #adr044-drawer) .adr044-cd-manual-actions button {
+    flex: 1 1 150px !important;
+    white-space: normal !important;
+}
+html :is(#adr048-popup-panel, #adr044-drawer) #adr044-cd-draw-output {
+    max-height: 230px !important;
+    overflow: auto !important;
+    white-space: pre-wrap !important;
+    overflow-wrap: anywhere !important;
+}
+html :is(#adr048-popup-panel, #adr044-drawer) #adr044-cd-selection-preview {
+    min-height: 170px !important;
+    font-family: ui-monospace, SFMono-Regular, Consolas, monospace !important;
+    font-size: 12px !important;
+    line-height: 1.55 !important;
+    resize: vertical !important;
+}
+@media (max-width: 520px) {
+    html :is(#adr048-popup-panel, #adr044-drawer) .adr044-cd-ai-presets .adr044-template-compact {
+        grid-template-columns: minmax(0, 1fr) !important;
+    }
+}
+
+/* 模块按需展开：三类标签页统一折叠卡片，保留系统原生 details 键盘操作。 */
+html #adr048-popup-panel[data-arb-theme] #adr048-popup-body details.adrx-module,
+html #adr044-drawer details.adrx-module {
+    margin: 10px 0 !important;
+    padding: 0 14px !important;
+    border-radius: 14px !important;
+}
+html #adr048-popup-panel[data-arb-theme] #adr048-popup-body details.adrx-module[open],
+html #adr044-drawer details.adrx-module[open] {
+    padding-bottom: 14px !important;
+}
+html #adr048-popup-panel[data-arb-theme] #adr048-popup-body details.adrx-module > summary,
+html #adr044-drawer details.adrx-module > summary {
+    display: flex !important;
+    align-items: center !important;
+    gap: 9px !important;
+    min-height: 44px !important;
+    margin: 0 -14px !important;
+    padding: 12px 14px !important;
+    border-radius: 13px !important;
+    list-style: none !important;
+    font-size: 12px !important;
+    line-height: 1.5 !important;
+    letter-spacing: .04em !important;
+    cursor: pointer !important;
+    user-select: none !important;
+}
+html #adr048-popup-panel[data-arb-theme] #adr048-popup-body details.adrx-module[open] > summary,
+html #adr044-drawer details.adrx-module[open] > summary {
+    margin-bottom: 10px !important;
+    border-bottom: 1px solid var(--arb-line, var(--adrx-line, rgba(128, 128, 128, .2))) !important;
+    border-radius: 13px 13px 0 0 !important;
+}
+html :is(#adr048-popup-panel, #adr044-drawer) details.adrx-module > summary::-webkit-details-marker {
+    display: none !important;
+}
+html :is(#adr048-popup-panel, #adr044-drawer) details.adrx-module > summary::marker {
+    content: "";
+}
+html #adr048-popup-panel[data-arb-theme] #adr048-popup-body details.adrx-module > summary::after,
+html #adr044-drawer details.adrx-module > summary::after {
+    content: "" !important;
+    display: block !important;
+    flex: 0 0 7px !important;
+    width: 7px !important;
+    height: 7px !important;
+    margin-left: auto !important;
+    margin-right: 3px !important;
+    border: solid currentColor !important;
+    border-width: 0 1.5px 1.5px 0 !important;
+    background: none !important;
+    transform: rotate(-45deg) !important;
+    transition: transform .16s ease !important;
+    opacity: .65 !important;
+}
+html #adr048-popup-panel[data-arb-theme] #adr048-popup-body details.adrx-module[open] > summary::after,
+html #adr044-drawer details.adrx-module[open] > summary::after {
+    transform: rotate(45deg) !important;
+}
+html :is(#adr048-popup-panel, #adr044-drawer) details.adrx-module > summary:focus-visible {
+    outline: 2px solid var(--arb-lilac, #b890cf) !important;
+    outline-offset: -3px !important;
+}
+
+/* 操作居中：旧版只在右边留防误触空隙，改为左右均分，长按钮自动换行。 */
+html #adr048-popup-panel[data-arb-theme] #adr048-popup-body :is(.adr048-actions, .adr044-template-mini-actions, .adr044-auto-calibrate-row),
+html #adr044-drawer :is(.adr044-actions, .adr044-template-mini-actions, .adr044-auto-calibrate-row) {
+    display: flex !important;
+    flex-wrap: wrap !important;
+    justify-content: center !important;
+    align-items: center !important;
+    gap: 8px !important;
+    margin-left: auto !important;
+    margin-right: auto !important;
+}
+html #adr048-popup-panel[data-arb-theme] #adr048-popup-body :is(.adr048-actions, .adr044-template-mini-actions, .adr044-auto-calibrate-row) > button,
+html #adr044-drawer :is(.adr044-actions, .adr044-template-mini-actions, .adr044-auto-calibrate-row) > button {
+    flex: 1 1 130px !important;
+    width: auto !important;
+    max-width: 240px !important;
+    min-width: 0 !important;
+    white-space: normal !important;
+    overflow-wrap: anywhere !important;
+}
+html :is(#adr048-popup-panel, #adr044-drawer) .adr044-cd-chiprow {
+    justify-content: center !important;
+}
+html #adr048-popup-panel[data-arb-theme] #adr048-popup-body button,
+html #adr044-drawer button,
+html #adrx-editor button {
+    text-align: center !important;
+    justify-content: center !important;
+    align-items: center !important;
+}
+html #adrx-editor .adrx-editor-foot {
+    display: flex !important;
+    flex-wrap: wrap !important;
+    justify-content: center !important;
+    margin-left: auto !important;
+    margin-right: auto !important;
+}
+html #adrx-editor .adrx-editor-foot button {
+    flex: 0 1 180px !important;
+    min-width: 100px !important;
+}
+html :is(#adr048-popup-panel, #adr044-drawer) textarea[aria-busy="true"],
+html #adrx-editor textarea[aria-busy="true"] {
+    cursor: text !important;
+}
+@media (prefers-reduced-motion: reduce) {
+    html #adr048-popup-panel[data-arb-theme] #adr048-popup-body details.adrx-module > summary::after,
+    html #adr044-drawer details.adrx-module > summary::after {
+        transition: none !important;
+    }
 }
