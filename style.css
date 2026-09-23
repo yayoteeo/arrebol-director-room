@@ -6357,3 +6357,47 @@ html #adrx-editor textarea[aria-busy="true"] {
         transition: none !important;
     }
 }
+
+/* ============================================================
+   v1.34.1 分幕列表（耳边卡面板里能看能改）
+   ============================================================ */
+html #adr048-popup-panel[data-arb-theme] #adr048-popup-body #adr044-cd-expand-panel,
+html #adr044-drawer #adr044-cd-expand-panel { white-space: normal !important; }
+html #adr048-popup-panel[data-arb-theme] #adr048-popup-body #adr044-cd-expand-panel:empty,
+html #adr044-drawer #adr044-cd-expand-panel:empty { display: none !important; }
+.adr044-cd-step-head { font-size: 12px; font-weight: 600; margin: 4px 0 6px; opacity: .92; }
+.adr044-cd-step-hint { font-weight: 400; opacity: .7; }
+.adr044-cd-step { border: 1px solid rgba(128,128,128,.22); border-radius: 12px; padding: 6px 8px 8px; margin: 6px 0; }
+.adr044-cd-step.on { border-color: rgba(128,128,128,.55); box-shadow: inset 0 0 0 1px rgba(255,255,255,.18); }
+.adr044-cd-step-row { display: flex; align-items: center; gap: 6px; }
+.adr044-cd-step-mark { flex: 0 0 auto; font-size: 11.5px; font-weight: 600; white-space: nowrap; }
+html #adr048-popup-panel[data-arb-theme] #adr048-popup-body #adr044-cd-expand-panel .adr044-cd-step-name,
+html #adr044-drawer #adr044-cd-expand-panel .adr044-cd-step-name { flex: 1 1 auto; min-width: 0; margin: 0 !important; min-height: 30px !important; padding: 3px 8px !important; font-size: 12px !important; }
+.adr044-cd-step-btns { flex: 0 0 auto; display: inline-flex; gap: 3px; }
+html #adr048-popup-panel[data-arb-theme] #adr048-popup-body #adr044-cd-expand-panel .adr044-cd-step-btn,
+html #adr044-drawer #adr044-cd-expand-panel .adr044-cd-step-btn { min-height: 26px !important; padding: 0 8px !important; margin: 0 !important; font-size: 11.5px !important; border-radius: 999px !important; width: auto !important; flex: 0 0 auto; }
+html #adr048-popup-panel[data-arb-theme] #adr048-popup-body #adr044-cd-expand-panel .adr044-cd-step-text,
+html #adr044-drawer #adr044-cd-expand-panel .adr044-cd-step-text { width: 100% !important; max-width: 100% !important; margin: 6px 0 0 !important; font-size: 12px !important; line-height: 1.5 !important; min-height: 44px !important; }
+.adr044-cd-step-actions { display: flex; gap: 6px; margin-top: 6px; flex-wrap: wrap; }
+.adr044-cd-step-analysis { margin-top: 6px; font-size: 11.5px; opacity: .85; }
+.adr044-cd-step-analysis > div { white-space: pre-wrap; margin-top: 4px; }
+
+/* v2.0.0 手机端：悬浮窗尽量使用完整可视高度，内容留在窗口内滚动。 */
+@media (max-width: 600px) {
+    #adr048-popup-panel {
+        height: 100vh !important;
+        height: 100dvh !important;
+    }
+    #adr048-popup-shell {
+        top: calc(env(safe-area-inset-top, 0px) + 8px) !important;
+        bottom: calc(env(safe-area-inset-bottom, 0px) + 8px) !important;
+        min-height: 0 !important;
+        max-height: calc(100vh - env(safe-area-inset-top, 0px) - env(safe-area-inset-bottom, 0px) - 16px) !important;
+        max-height: calc(100dvh - env(safe-area-inset-top, 0px) - env(safe-area-inset-bottom, 0px) - 16px) !important;
+        overscroll-behavior: contain !important;
+    }
+    #adr048-popup-body {
+        min-height: 0 !important;
+        overscroll-behavior: contain !important;
+    }
+}
